@@ -116,8 +116,8 @@ def buscar_fbref(competicao: str) -> dict:
                     continue
             if dados:
                 break
-    except Exception as e:
-        st.warning(f"FBref: {e}")
+    except Exception:
+        pass
 
     return dados
 
@@ -171,8 +171,8 @@ def buscar_whoscored(competicao: str) -> dict:
                     dados[nome] = {"xg": xg_val, "xga": xga_val}
             except Exception:
                 continue
-    except Exception as e:
-        st.warning(f"WhoScored: {e}")
+    except Exception:
+        pass
     finally:
         try:
             browser.close()
@@ -185,17 +185,12 @@ def buscar_whoscored(competicao: str) -> dict:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def buscar_dados_liga(competicao: str) -> dict:
-    # 1. FBref (mais confiavel, sem browser)
     dados = buscar_fbref(competicao)
     if dados:
-        st.toast("Dados obtidos do FBref")
         return dados
-    # 2. WhoScored (browser)
-    st.toast("FBref indisponivel, tentando WhoScored...")
     time.sleep(3)
     dados = buscar_whoscored(competicao)
     if dados:
-        st.toast("Dados obtidos do WhoScored")
         return dados
     return {}
 
