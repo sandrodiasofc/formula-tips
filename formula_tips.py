@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-FORMULA TIPS V4.1 — VERSÃO ESTÁVEL (FBREF + REDSCORES)
+FORMULA TIPS V4.1 — VERSÃO ESTÁVEL (FBREF + REDSCORES + FALLBACKS)
 10 Regras | 9 Seções | 16 Itens Checklist
-Fontes: FBref (fallback) + Redscores (dados por jogo)
+Fontes: Redscores (dados por jogo) + FBref (fallback)
 Odds: Entrada Manual (Regra 1)
 """
 
@@ -71,7 +71,7 @@ DEFAULTS = {
     "sul-americana": {"xg":1.35,"xga":1.35,"gols":1.35,"sog":4.4,"fin":11.5,"esc":5.0,"faltas":25.0},
 }
 
-# ========== REDSCORES ==========
+# ========== REDSCORES URLS ==========
 REDSCORES_URLS = {
     "cruzeiro": "https://redscores.com/team/cruzeiro/3371",
     "flamengo": "https://redscores.com/team/flamengo/1234",
@@ -99,6 +99,14 @@ REDSCORES_URLS = {
 # ========== UTILITÁRIOS ==========
 def normalizar(texto):
     return unicodedata.normalize("NFD", texto.lower().strip()).encode("ascii", "ignore").decode("ascii")
+
+def encontrar_time_fbref(nome_time: str, dados_fbref: dict):
+    if not dados_fbref: return {}, "default"
+    nome_normalizado = normalizar(nome_time)
+    if nome_normalizado in dados_fbref: return dados_fbref[nome_normalizado], "FBref"
+    for k, v in dados_fbref.items():
+        if nome_normalizado in k or k in nome_normalizado: return v, "FBref"
+    return {}, "default"
 
 def poisson(lmbda, k):
     if lmbda <= 0: return 1.0 if k == 0 else 0.0
@@ -189,8 +197,7 @@ def extrair_dados_redscores(nome_time):
     
     try:
         resp = requests.get(url, headers=headers, timeout=15)
-        if resp.status_code != 200:
-            return None
+        if resp.status_code != 200: return None
         html = resp.text
         
         dados = {"fonte": "Redscores"}
@@ -243,35 +250,22 @@ def extrair_dados_redscores(nome_time):
         return dados
         
     except Exception as e:
-        st.warning(f"❌ Redscores: {e}")
+        st.warning(f"Redscores: {e}")
         return None
 
 def calcular_metricas_redscores(dados_redscores):
     if not dados_redscores or "ultimos_jogos" not in dados_redscores:
         return None
-    
     jogos = dados_redscores["ultimos_jogos"]
-    if len(jogos) < 2:
-        return None
-    
+    if len(jogos) < 2: return None
     gols_pro = [j["gols_pro"] for j in jogos]
     gols_contra = [j["gols_contra"] for j in jogos]
-    
     def media_cv(valores):
-        m = np.mean(valores)
-        dp = np.std(valores, ddof=0)
-        cv = (dp / m * 100) if m > 0 else 0
-        return m, cv
-    
+        m = np.mean(valores); dp = np.std(valores, ddof=0)
+        return m, (dp / m * 100) if m > 0 else 0
     m_gols, cv_gols = media_cv(gols_pro)
     m_sof, _ = media_cv(gols_contra)
-    
-    return {
-        "gols": round(m_gols, 1),
-        "cv_gols": round(cv_gols, 0),
-        "sofridos": round(m_sof, 1),
-        "jogos": len(jogos)
-    }
+    return {"gols": round(m_gols, 1), "cv_gols": round(cv_gols, 0), "sofridos": round(m_sof, 1), "jogos": len(jogos)}
 
 # ========== MONTE CARLO ==========
 def monte_carlo(l1, l2, cv1=35, cv2=35, n=10000):
@@ -304,41 +298,41 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     ctx = contexto or {}
     alertas = []
     checklist = {}
+    DEF = DEFAULTS.get(normalizar(competicao), DEFAULTS["brasileirao"])
 
-    # 1. Tentar Redscores
+    # 1. Redscores
     with st.spinner("🔍 Buscando dados no Redscores..."):
         dados_a = extrair_dados_redscores(time_a)
         dados_b = extrair_dados_redscores(time_b)
     
-    if dados_a:
-        st.success(f"✅ {time_a}: Dados extraídos do Redscores ({dados_a.get('jogos_encontrados', 0)} jogos)")
-    if dados_b:
-        st.success(f"✅ {time_b}: Dados extraídos do Redscores ({dados_b.get('jogos_encontrados', 0)} jogos)")
+    if dados_a: st.success(f"✅ {time_a}: Redscores ({dados_a.get('jogos_encontrados', 0)} jogos)")
+    if dados_b: st.success(f"✅ {time_b}: Redscores ({dados_b.get('jogos_encontrados', 0)} jogos)")
     
-    # 2. Fallback: FBref
+    # 2. Fallback FBref
     if not dados_a or not dados_b:
         with st.spinner("⚠️ Redscores incompleto. Buscando FBref..."):
             fb = buscar_fbref(competicao)
-        
         if not dados_a:
-            dfb_a, fonte_a = encontrar_time_fbref(time_a, fb) if fb else ({}, "default")
+            dfb_a, _ = encontrar_time_fbref(time_a, fb) if fb else ({}, "default")
             if dfb_a:
                 dados_a = {"xg": dfb_a.get("xg"), "xga": dfb_a.get("xga"), "fonte": "FBref"}
-                st.info(f"⚠️ {time_a}: Usando FBref (fallback)")
-        
+                st.info(f"⚠️ {time_a}: FBref (fallback)")
         if not dados_b:
-            dfb_b, fonte_b = encontrar_time_fbref(time_b, fb) if fb else ({}, "default")
+            dfb_b, _ = encontrar_time_fbref(time_b, fb) if fb else ({}, "default")
             if dfb_b:
                 dados_b = {"xg": dfb_b.get("xg"), "xga": dfb_b.get("xga"), "fonte": "FBref"}
-                st.info(f"⚠️ {time_b}: Usando FBref (fallback)")
+                st.info(f"⚠️ {time_b}: FBref (fallback)")
+
+    # 3. Proteção contra None
+    xg_a = dados_a.get("xg") if dados_a else None
+    xga_a = dados_a.get("xga") if dados_a else None
+    xg_b = dados_b.get("xg") if dados_b else None
+    xga_b = dados_b.get("xga") if dados_b else None
     
-    # 3. Defaults
-    DEF = DEFAULTS.get(normalizar(competicao), DEFAULTS["brasileirao"])
-    
-    xg_a = dados_a.get("xg") if dados_a else DEF["xg"]
-    xga_a = dados_a.get("xga") if dados_a else DEF["xga"]
-    xg_b = dados_b.get("xg") if dados_b else DEF["xg"]
-    xga_b = dados_b.get("xga") if dados_b else DEF["xga"]
+    xg_a = xg_a if xg_a is not None else DEF["xg"]
+    xga_a = xga_a if xga_a is not None else DEF["xga"]
+    xg_b = xg_b if xg_b is not None else DEF["xg"]
+    xga_b = xga_b if xga_b is not None else DEF["xga"]
     
     fonte_a = dados_a.get("fonte", "default") if dados_a else "default"
     fonte_b = dados_b.get("fonte", "default") if dados_b else "default"
@@ -351,22 +345,15 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     
     xg_label_a = f"{xg_a:.2f}" if xg_a_disp else f"{xg_a:.2f} (gols reais)"
     xg_label_b = f"{xg_b:.2f}" if xg_b_disp else f"{xg_b:.2f} (gols reais)"
-    
-    # Métricas dos últimos jogos
+
+    # Métricas últimos jogos
     met_a = calcular_metricas_redscores(dados_a) if dados_a else None
     met_b = calcular_metricas_redscores(dados_b) if dados_b else None
     
-    if met_a:
-        gols_a, cv_gols_a = met_a["gols"], met_a["cv_gols"]
-        checklist["dados_5_jogos"] = True
-    else:
-        gols_a, cv_gols_a = DEF["gols"], 35.0
-    
-    if met_b:
-        gols_b, cv_gols_b = met_b["gols"], met_b["cv_gols"]
-        checklist["dados_5_jogos"] = True
-    else:
-        gols_b, cv_gols_b = DEF["gols"], 35.0
+    if met_a: gols_a, cv_gols_a = met_a["gols"], met_a["cv_gols"]; checklist["dados_5_jogos"] = True
+    else: gols_a, cv_gols_a = DEF["gols"], 35.0
+    if met_b: gols_b, cv_gols_b = met_b["gols"], met_b["cv_gols"]; checklist["dados_5_jogos"] = True
+    else: gols_b, cv_gols_b = DEF["gols"], 35.0
     
     sog_a = dados_a.get("sog", DEF["sog"]) if dados_a else DEF["sog"]
     sog_b = dados_b.get("sog", DEF["sog"]) if dados_b else DEF["sog"]
