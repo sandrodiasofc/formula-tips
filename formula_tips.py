@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-FORMULA TIPS V4.1 — VERSÃO ESTÁVEL
+FORMULA TIPS V4.1 — VERSÃO ESTÁVEL (COM CORREÇÃO WHOSCORED)
 10 Regras | 9 Seções | 16 Itens Checklist | Dados Validados com Fallbacks
 Fontes: WhoScored (xG/xGA) + FBref (xG/xGA fallback)
 Odds: Entrada Manual (Regra 1)
@@ -144,47 +144,97 @@ def novo_browser():
     ctx.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     return p, browser, ctx
 
-# ========== WHOSCORED ==========
+# ========== WHOSCORED (CORRIGIDO) ==========
 @st.cache_data(ttl=3600, show_spinner=False)
 def buscar_whoscored(competicao: str) -> dict:
+    """Busca xG e xGA de todos os times no WhoScored."""
     url = WHOSCORED_URLS.get(normalizar(competicao))
-    if not url: return {}
+    if not url:
+        return {}
+    
     p = browser = ctx = None
     dados = {}
+    
     try:
         p, browser, ctx = novo_browser()
         page = ctx.new_page()
         page.route("**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,mp4}", lambda r: r.abort())
         page.goto(url, wait_until="networkidle", timeout=60000)
         time.sleep(5)
+        
         try: page.click("button:has-text('Accept')", timeout=4000); time.sleep(1)
-        except: pass
-        page.wait_for_selector("table#top-team-stats-summary-grid", timeout=30000)
-        time.sleep(3)
-        rows = page.query_selector_all("table#top-team-stats-summary-grid tbody tr")
-        for row in rows:
+        except:
+            try: page.click("button:has-text('Aceitar')", timeout=3000); time.sleep(1)
+            except: pass
+        
+        # Múltiplos seletores para encontrar a tabela
+        selectores = [
+            "#top-team-stats-summary-grid",
+            "table.stats-table",
+            "div#statistics-table-outright table",
+            "div[id*='statistics'] table",
+            "table[class*='team']",
+        ]
+        
+        tabela_encontrada = False
+        for seletor in selectores:
             try:
-                nome_el = row.query_selector("td a.team-link")
-                if not nome_el: continue
-                nome = nome_el.inner_text().strip().lower()
-                cells = row.query_selector_all("td")
-                vals = [c.inner_text().strip() for c in cells]
-                d = {}
-                for v in vals:
-                    try:
-                        fv = float(v.replace(",","."))
-                        if "xg" not in d: d["xg"] = fv
-                        elif "xga_diff" not in d: d["xga_diff"] = fv
-                    except: pass
-                if "xg" in d and "xga_diff" in d:
-                    d["xga"] = round(d["xg"] - d["xga_diff"], 2)
-                    d["fonte"] = "WhoScored"
-                if d: dados[nome] = d
-            except: continue
-    except: pass
+                page.wait_for_selector(seletor, timeout=10000)
+                tabela_encontrada = True
+                break
+            except:
+                continue
+        
+        if not tabela_encontrada:
+            try: page.wait_for_selector("table", timeout=10000)
+            except: return {}
+        
+        time.sleep(3)
+        tabelas = page.query_selector_all("table")
+        
+        for tabela in tabelas:
+            rows = tabela.query_selector_all("tbody tr")
+            if len(rows) == 0: continue
+            
+            for row in rows:
+                try:
+                    nome_el = row.query_selector("td a.team-link") or row.query_selector("td a") or row.query_selector("td:first-child")
+                    if not nome_el: continue
+                    
+                    nome = nome_el.inner_text().strip().lower()
+                    if len(nome) < 3 or nome in ("team", "squad", "time"): continue
+                    
+                    cells = row.query_selector_all("td")
+                    valores = []
+                    for cell in cells:
+                        texto = cell.inner_text().strip()
+                        try:
+                            valor = float(texto.replace(",", ".").replace("%", ""))
+                            valores.append(valor)
+                        except:
+                            valores.append(texto)
+                    
+                    xg_val = xga_val = None
+                    for v in valores:
+                        if isinstance(v, (int, float)) and 0.3 <= v <= 4.0:
+                            if xg_val is None: xg_val = v
+                            elif xga_val is None and v != xg_val:
+                                xga_val = v
+                                break
+                    
+                    if xg_val is not None and xga_val is not None:
+                        dados[nome] = {"xg": round(xg_val, 2), "xga": round(xga_val, 2), "fonte": "WhoScored"}
+                except:
+                    continue
+            
+            if len(dados) >= 5: break
+        
+    except Exception as e:
+        st.warning(f"WhoScored: {e}")
     finally:
         try: browser.close(); p.stop()
         except: pass
+    
     return dados
 
 # ========== FBREF ==========
@@ -225,7 +275,7 @@ def buscar_fbref(competicao: str) -> dict:
     except: pass
     return dados
 
-# ========== MONTE CARLO (CORRIGIDO) ==========
+# ========== MONTE CARLO ==========
 def monte_carlo(l1, l2, cv1=35, cv2=35, n=10000):
     np.random.seed(42)
     v1 = emp = v2 = btts_c = over25_c = 0
@@ -264,7 +314,6 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
 
     DEF = DEFAULTS.get(normalizar(competicao), DEFAULTS["brasileirao"])
 
-    # xG com fonte individual
     dws_a, fonte_a = encontrar(time_a, ws)
     dws_b, fonte_b = encontrar(time_b, ws)
     dfb_a, fonte_fb_a = encontrar(time_a, fb)
@@ -287,7 +336,6 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     xg_label_a = f"{xg_a:.2f}" if xg_a_disp else f"{xg_a:.2f} (gols reais)"
     xg_label_b = f"{xg_b:.2f}" if xg_b_disp else f"{xg_b:.2f} (gols reais)"
 
-    # Dados padrão (fallbacks)
     gols_a, gols_b = DEF["gols"], DEF["gols"]
     sog_a, sog_b = DEF["sog"], DEF["sog"]
     fin_a, fin_b = DEF["fin"], DEF["fin"]
@@ -295,23 +343,19 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     faltas_a, faltas_b = DEF["faltas"], DEF["faltas"]
     cv_gols_a = cv_gols_b = cv_sog_a = cv_sog_b = cv_fin_a = cv_fin_b = 35.0
 
-    # Checklist honesto
     checklist["dados_5_jogos"] = False
     checklist["fin_verificado"] = False
     checklist["faltas_verificado"] = False
     checklist["posse_verificado"] = False
     checklist["h2h_verificado"] = False
 
-    # REGRA 3: CV
     f_a, acao_a = fator_cv(cv_gols_a); f_b, acao_b = fator_cv(cv_gols_b)
     f_sog_a = 0.97 if 25 <= cv_sog_a <= 35 else 1.0
     f_sog_b = 0.97 if 25 <= cv_sog_b <= 35 else 1.0
 
-    # Lambda
     l1 = ((xg_a + xga_b) / 2) * 0.95 * f_a * f_sog_a
     l2 = ((xg_b + xga_a) / 2) * 0.90 * f_b * f_sog_b
 
-    # REGRA 4/6C: Contexto
     if ctx.get("t1_sem_obj"): l1 = max(0.05, l1 - 0.5); alertas.append("Regra 4.2: Time 1 sem objetivo")
     if ctx.get("t2_sem_obj"): l2 = max(0.05, l2 - 0.5); alertas.append("Regra 4.2: Time 2 sem objetivo")
     if ctx.get("t1_reserva"): l2 += 0.5; alertas.append("Regra 4.3: Time 1 reserva (+0.5 λ adv)")
@@ -322,7 +366,6 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     l1, l2 = max(0.05, l1), max(0.05, l2)
     lt = l1 + l2
 
-    # Poisson
     v1 = e = v2 = 0.0
     for i in range(10):
         for j in range(10):
@@ -336,11 +379,9 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     over25 = prob_over(lt, 2); under25 = prob_under(lt, 2)
     under45 = prob_under(lt, 4)
 
-    # Monte Carlo
     mc = monte_carlo(l1, l2, cv_gols_a, cv_gols_b)
     checklist["monte_carlo_executado"] = True
 
-    # REGRA 6A/6B
     over25_seguro = lt > 3.0 and not ctx.get("t1_sem_obj") and not ctx.get("t2_sem_obj")
     under25_seguro = lt < 2.0 and (xga_a < 0.8 or xga_b < 0.8)
     checklist["over25_verificado"] = True
@@ -348,15 +389,12 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     if not over25_seguro: alertas.append("Over 2.5 NEGADO (Regra 6A)")
     if not under25_seguro: alertas.append("Under 2.5 NÃO CONFIÁVEL (Regra 6B)")
 
-    # REGRA 7/8
     checklist["sog_verificado"] = True
     checklist["cartoes_verificado"] = True
 
-    # Odds
     o_v1 = odds_v1 or 2.00; o_emp = odds_emp or 3.20; o_v2 = odds_v2 or 3.50
     checklist["odds_disponiveis"] = bool(odds_v1)
 
-    # Value Bets
     def vb(prob, odd, nome):
         ev_val = ev(prob, odd); k = kelly(prob, odd)
         conf = "Alta" if ev_val > 0.05 else ("Media" if ev_val > 0.005 else ("Baixa" if ev_val > 0 else "Sem Value"))
@@ -372,13 +410,11 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     checklist["ev_ok"] = any(m["ev"] > 0.005 for m in mercados)
     checklist["checklist_completo"] = True
 
-    # Alta Incerteza
     n_ok = sum(1 for v in checklist.values() if v)
     alta_incerteza = n_ok < 10 or cv_gols_a >= 60 or cv_gols_b >= 60
     if alta_incerteza:
         alertas.insert(0, "⚠️ ALTA INCERTEZA — Stake reduzido a 0.5% do bank")
 
-    # Eficiência
     def nota_ef(sog, fin, gols):
         if fin == 0: return 50
         return min(100, int((sog/fin*0.5 + gols/fin*0.5) * 200))
@@ -430,130 +466,4 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     # 5. Value Bets
     html = "<table><tr><th>Mercado</th><th>Prob.</th><th>Odd</th><th>EV%</th><th>Kelly</th><th>Stake</th></tr>"
     for m in mercados:
-        cor = "#4CAF50" if m["ev"]>0.005 else ("#C9A84C" if m["ev"]>0 else "#EF5350")
-        html += f"<tr><td>{m['nome']}</td><td>{m['prob']*100:.1f}%</td><td>{m['odd']:.2f}</td><td style='color:{cor}'>{m['ev']*100:+.1f}%</td><td>{m['kelly']:.3f}</td><td>{m['stake']:.1f}%</td></tr>"
-    html += "</table>"
-    st.markdown(card("5. Value Bets — Kelly 33% (Regra 5)", html), unsafe_allow_html=True)
-
-    # 6. Tabela de Sugestões
-    html = "<p style='color:#C9A84C;font-weight:600'>⚽ GOLS</p>"
-    for label, val, rec in [
-        ("Over 1.5", over15, "✅ Conservador"), ("Under 1.5", under15, "🛡️ Proteção"),
-        ("Over 2.5", over25, "✅ Valor" if over25_seguro else "⚠️ Cautela"),
-        ("Under 2.5", under25, "🔒 Âncora" if under25_seguro else "⚠️ Cautela"),
-        ("Under 4.5", under45, "🔒 Âncora"),
-    ]:
-        cor = "#4CAF50" if val > 0.6 else ("#C9A84C" if val > 0.45 else "#EF5350")
-        html += srow(label, barra(val * 100, cor), f"{val*100:.1f}% — {rec}")
-
-    html += "<p style='color:#C9A84C;font-weight:600;margin-top:10px'>🎯 FINALIZAÇÕES</p>"
-    html += srow("Média Combinada", barra((fin_a + fin_b) / 30 * 100, "#C9A84C"), f"{fin_a + fin_b:.0f} por jogo")
-
-    html += "<p style='color:#C9A84C;font-weight:600;margin-top:10px'>🚩 ESCANTEIOS</p>"
-    html += srow("Média Combinada", barra((esc_a + esc_b) / 15 * 100, "#C9A84C"), f"{esc_a + esc_b:.0f} por jogo")
-
-    html += "<p style='color:#C9A84C;font-weight:600;margin-top:10px'>🟨 CARTÕES</p>"
-    html += srow("Over 1.5 (Linha Segura)", barra(90, "#4CAF50"), "90% ✅")
-    html += srow("Under 9.5 (Linha Segura)", barra(96, "#4CAF50"), "96% 🔒")
-
-    html += "<p style='color:#C9A84C;font-weight:600;margin-top:10px'>🟨 FALTAS</p>"
-    html += srow("Média Combinada", barra((faltas_a + faltas_b) / 40 * 100, "#C9A84C"), f"{faltas_a + faltas_b:.0f} por jogo")
-
-    html += "<p style='color:#C9A84C;font-weight:600;margin-top:10px'>🥅 CHUTES A GOL (SOG)</p>"
-    html += srow("Média Combinada", barra((sog_a + sog_b) / 15 * 100, "#C9A84C"), f"{sog_a + sog_b:.0f} por jogo")
-
-    st.markdown(card("6. Tabela de Sugestões", html), unsafe_allow_html=True)
-
-    # 7. Confluência
-    xg_comb = xg_a + xg_b
-    if xg_comb > 3.5: classif = "Explosão"
-    elif xg_comb > 2.8: classif = "Aberto"
-    elif xg_comb > 2.0: classif = "Equilibrado"
-    else: classif = "Travado"
-    mercado_sug = "Over escanteios + BTTS" if classif in ["Explosão", "Aberto"] else "Under gols + Cartões"
-    conv = "✅ Convergente" if (over25_seguro and over25 > 0.5) or (not over25_seguro and over25 < 0.5) else "⚠️ Divergente"
-    html = f"""<table>
-    <tr><td class='stat-label'>Classificação</td><td class='stat-value'>{classif}</td></tr>
-    <tr><td class='stat-label'>Mercado sugerido</td><td class='stat-value'>{mercado_sug}</td></tr>
-    <tr><td class='stat-label'>Status</td><td class='stat-value'>{conv}</td></tr></table>"""
-    st.markdown(card("7. Confluência com Modelo Qualitativo", html), unsafe_allow_html=True)
-
-    # 8. Confiança Geral
-    nivel = "⚠️ ALTA INCERTEZA" if alta_incerteza else ("Alta" if n_ok >= 12 else ("Media" if n_ok >= 9 else "Baixa"))
-    stake_geral = "0.5%" if alta_incerteza else ("2-3%" if nivel == "Alta" else ("1-2%" if nivel == "Media" else "0.5-1%"))
-    html = f"""<table>
-    <tr><td class='stat-label'>Nível</td><td class='stat-value' style='color:{"#EF5350" if alta_incerteza else "#4CAF50"}'>{nivel}</td></tr>
-    <tr><td class='stat-label'>Stake recomendado</td><td class='stat-value'>{stake_geral} do bank</td></tr></table>
-    <table style='margin-top:8px'><tr><th>Check (16 itens)</th><th>Status</th></tr>
-    {''.join(f"<tr><td>{k.replace('_',' ').title()}</td><td>{'✅' if v else '❌'}</td></tr>" for k, v in checklist.items())}</table>"""
-    st.markdown(card("8. Confiança Geral (Regra 5)", html), unsafe_allow_html=True)
-
-    # 9. CSV
-    vb_top = max(mercados, key=lambda m: m["ev"])
-    csv = pd.DataFrame([{
-        "time1": time_a, "time2": time_b,
-        "data": datetime.now().strftime("%Y-%m-%d"), "competicao": competicao,
-        "mercado": vb_top["nome"], "odd_mercado": round(vb_top["odd"], 2),
-        "odd_justa": round(1 / vb_top["prob"], 2) if vb_top["prob"] > 0 else None,
-        "value": "Sim" if vb_top["ev"] > 0 else "Nao",
-        "stake": f'{vb_top["stake"]:.1f}%', "banca_ini": 1000.00,
-        "banca_fim": "", "resultado": "", "acerto": "", "v4.1_confianca": nivel
-    }])
-    st.dataframe(csv, use_container_width=True)
-    st.download_button("📥 Baixar CSV", csv.to_csv(index=False).encode("utf-8"), file_name="formula_tips_v41.csv", mime="text/csv")
-
-    # Salvar histórico
-    try:
-        hist = json.loads(HISTORICO_FILE.read_text()) if HISTORICO_FILE.exists() else []
-        hist.insert(0, {"data": datetime.now().strftime("%d/%m/%Y %H:%M"), "time_a": time_a, "time_b": time_b, "competicao": competicao, "v1": round(v1*100,1), "emp": round(e*100,1), "v2": round(v2*100,1), "nivel": nivel})
-        HISTORICO_FILE.write_text(json.dumps(hist[:20], ensure_ascii=False, indent=2))
-    except: pass
-
-# ========== UI ==========
-st.set_page_config(page_title="FORMULA TIPS V4.1", page_icon="⚽", layout="centered")
-st.markdown(CSS, unsafe_allow_html=True)
-
-logo_path = "logotipo formula tips 01.png"
-if os.path.exists(logo_path):
-    col_logo, col_titulo = st.columns([1, 3])
-    with col_logo: st.image(logo_path, width=90)
-    with col_titulo:
-        st.markdown("<h1 style='margin:0;padding-top:8px;color:#F0F0F0'>FORMULA TIPS V4.1</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='color:#C9A84C;margin:0;font-size:14px'>Versão Estável — Fallbacks Inteligentes</p>", unsafe_allow_html=True)
-else:
-    st.markdown("<h1 style='color:#F0F0F0;margin:0'>FORMULA TIPS V4.1</h1>", unsafe_allow_html=True)
-
-st.markdown("<hr style='border-color:#2A3F55;margin:12px 0'>", unsafe_allow_html=True)
-
-time_a = st.text_input("🟢 Time Mandante", placeholder="Ex: Flamengo")
-time_b = st.text_input("🔴 Time Visitante", placeholder="Ex: Palmeiras")
-competicao = st.selectbox("🏆 Competição", list(WHOSCORED_URLS.keys()))
-
-with st.expander("📋 Contexto da Partida (Regra 4 e 6C)"):
-    c1, c2 = st.columns(2)
-    with c1:
-        t1_sem = st.checkbox(f"{time_a or 'Mandante'} sem objetivo")
-        t1_res = st.checkbox(f"{time_a or 'Mandante'} time reserva")
-        t1_des = st.checkbox(f"{time_a or 'Mandante'} desespero")
-    with c2:
-        t2_sem = st.checkbox(f"{time_b or 'Visitante'} sem objetivo")
-        t2_adm = st.checkbox(f"{time_b or 'Visitante'} administra resultado")
-
-with st.expander("💰 Odds (Regra 1 — Menores do Mercado)"):
-    c1, c2, c3 = st.columns(3)
-    with c1: odd_v1 = st.number_input("Vit Casa", 1.01, 20.0, 2.00, 0.01, format="%.2f")
-    with c2: odd_emp = st.number_input("Empate", 1.01, 20.0, 3.20, 0.01, format="%.2f")
-    with c3: odd_v2 = st.number_input("Vit Fora", 1.01, 20.0, 3.50, 0.01, format="%.2f")
-
-if st.button("⚡ ANALISAR AGORA", use_container_width=True):
-    if not time_a or not time_b:
-        st.warning("Preencha os nomes dos dois times.")
-    else:
-        ctx = {"t1_sem_obj": t1_sem, "t1_reserva": t1_res, "t1_desespero": t1_des, "t2_sem_obj": t2_sem, "t2_admin": t2_adm}
-        analisar(time_a, time_b, competicao, odd_v1, odd_emp, odd_v2, ctx)
-
-if HISTORICO_FILE.exists():
-    with st.expander("📊 Histórico de Análises"):
-        hist = json.loads(HISTORICO_FILE.read_text())
-        for h in hist[:10]:
-            st.caption(f"{h['data']} — {h['time_a']} x {h['time_b']} ({h['competicao']}) — {h['nivel']}")
+        cor = "#4CAF50" if m["ev"]>0.005 else ("#C9A84C" if m["ev"]>0 else
