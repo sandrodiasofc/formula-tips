@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-FORMULA TIPS V4.1 — VERSÃO ESTÁVEL (FBREF + REDSCORES + FALLBACKS)
+FORMULA TIPS V4.1 — VERSÃO ESTÁVEL (REDSCORES + FBREF + FALLBACKS)
 10 Regras | 9 Seções | 16 Itens Checklist
 Fontes: Redscores (dados por jogo) + FBref (fallback)
 Odds: Entrada Manual (Regra 1)
@@ -69,31 +69,6 @@ DEFAULTS = {
     "ligue 1": {"xg":1.45,"xga":1.45,"gols":1.45,"sog":4.7,"fin":12.0,"esc":4.9,"faltas":23.0},
     "champions league": {"xg":1.60,"xga":1.60,"gols":1.60,"sog":5.1,"fin":13.0,"esc":5.0,"faltas":20.0},
     "sul-americana": {"xg":1.35,"xga":1.35,"gols":1.35,"sog":4.4,"fin":11.5,"esc":5.0,"faltas":25.0},
-}
-
-# ========== REDSCORES URLS ==========
-REDSCORES_URLS = {
-    "cruzeiro": "https://redscores.com/team/cruzeiro/3371",
-    "flamengo": "https://redscores.com/team/flamengo/1234",
-    "palmeiras": "https://redscores.com/team/palmeiras/5678",
-    "atletico mineiro": "https://redscores.com/team/atletico-mineiro/9012",
-    "atlético mineiro": "https://redscores.com/team/atletico-mineiro/9012",
-    "atletico-mg": "https://redscores.com/team/atletico-mineiro/9012",
-    "gremio": "https://redscores.com/team/gremio/3456",
-    "grêmio": "https://redscores.com/team/gremio/3456",
-    "internacional": "https://redscores.com/team/internacional/7890",
-    "sao paulo": "https://redscores.com/team/sao-paulo/1111",
-    "são paulo": "https://redscores.com/team/sao-paulo/1111",
-    "corinthians": "https://redscores.com/team/corinthians/2222",
-    "fluminense": "https://redscores.com/team/fluminense/3333",
-    "botafogo": "https://redscores.com/team/botafogo/4444",
-    "vasco": "https://redscores.com/team/vasco-da-gama/5555",
-    "vasco da gama": "https://redscores.com/team/vasco-da-gama/5555",
-    "bragantino": "https://redscores.com/team/bragantino/6666",
-    "athletico paranaense": "https://redscores.com/team/athletico-paranaense/7777",
-    "athletico-pr": "https://redscores.com/team/athletico-paranaense/7777",
-    "bahia": "https://redscores.com/team/bahia/8888",
-    "fortaleza": "https://redscores.com/team/fortaleza/9999",
 }
 
 # ========== UTILITÁRIOS ==========
@@ -184,78 +159,71 @@ def buscar_fbref(competicao: str) -> dict:
     except: pass
     return dados
 
-# ========== REDSCORES (FONTE PRINCIPAL) ==========
+# ========== REDSCORES ==========
+def buscar_time_redscores(nome_time):
+    nome_fmt = nome_time.lower().strip().replace(" ", "-")
+    nome_fmt = unicodedata.normalize("NFD", nome_fmt).encode("ascii", "ignore").decode("ascii")
+    url_direta = f"https://redscores.com/team/{nome_fmt}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        resp = requests.get(url_direta, headers=headers, timeout=10)
+        if resp.status_code == 200: return url_direta
+    except: pass
+    try:
+        url_busca = f"https://redscores.com/pt-br/search?q={nome_fmt}"
+        resp = requests.get(url_busca, headers=headers, timeout=10)
+        html = resp.text
+        pattern = rf'href="(/team/{nome_fmt}(?:/\d+)?)"'
+        match = re.search(pattern, html)
+        if match: return f"https://redscores.com{match.group(1)}"
+        pattern2 = rf'href="(/team/[^"]*{nome_fmt}[^"]*)"'
+        match = re.search(pattern2, html)
+        if match: return f"https://redscores.com{match.group(1)}"
+    except: pass
+    return None
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def extrair_dados_redscores(nome_time):
-    url = REDSCORES_URLS.get(normalizar(nome_time))
-    if not url:
-        nome_fmt = nome_time.lower().strip().replace(" ", "-")
-        nome_fmt = unicodedata.normalize("NFD", nome_fmt).encode("ascii", "ignore").decode("ascii")
-        url = f"https://redscores.com/team/{nome_fmt}"
-    
+    url = buscar_time_redscores(nome_time)
+    if not url: return None
     headers = {"User-Agent": "Mozilla/5.0"}
-    
     try:
         resp = requests.get(url, headers=headers, timeout=15)
         if resp.status_code != 200: return None
         html = resp.text
-        
-        dados = {"fonte": "Redscores"}
-        
-        # xG
-        xg_match = re.search(r'xG[:\s]*([\d.]+)', html, re.IGNORECASE)
-        if xg_match: dados["xg"] = float(xg_match.group(1))
-        
-        # xGA
-        xga_match = re.search(r'xGA[:\s]*([\d.]+)', html, re.IGNORECASE)
-        if xga_match: dados["xga"] = float(xga_match.group(1))
-        
-        # Posse
-        posse_match = re.search(r'(?:Posse|Possession)[:\s]*(\d+)%', html, re.IGNORECASE)
-        if posse_match: dados["posse"] = float(posse_match.group(1))
-        
-        # SOG
-        sog_match = re.search(r'(?:Chutes ao Gol|Shots on Target)[:\s]*([\d.]+)', html, re.IGNORECASE)
-        if sog_match: dados["sog"] = float(sog_match.group(1))
-        
-        # Finalizações
-        fin_match = re.search(r'(?:Finalizações|Total Shots)[:\s]*([\d.]+)', html, re.IGNORECASE)
-        if fin_match: dados["fin"] = float(fin_match.group(1))
-        
-        # Escanteios
-        esc_match = re.search(r'(?:Escanteios|Corners)[:\s]*([\d.]+)', html, re.IGNORECASE)
-        if esc_match: dados["esc"] = float(esc_match.group(1))
-        
-        # Cartões
-        cart_match = re.search(r'(?:Cartões|Cards)[:\s]*([\d.]+)', html, re.IGNORECASE)
-        if cart_match: dados["cartoes"] = float(cart_match.group(1))
-        
-        # Faltas
-        faltas_match = re.search(r'(?:Faltas|Fouls)[:\s]*([\d.]+)', html, re.IGNORECASE)
-        if faltas_match: dados["faltas"] = float(faltas_match.group(1))
-        
-        # Últimos jogos
+        dados = {"fonte": "Redscores", "url": url}
+        for nome, patterns in [
+            ("xg", [r'xG[:\s]*([\d.]+)', r'Expected Goals[:\s]*([\d.]+)', r'gols esperados[:\s]*([\d.]+)']),
+            ("xga", [r'xGA[:\s]*([\d.]+)', r'Expected Goals Against[:\s]*([\d.]+)', r'xG Contra[:\s]*([\d.]+)']),
+            ("posse", [r'(?:Posse|Possession|Posse de Bola)[:\s]*(\d+)%', r'Ball Possession[:\s]*(\d+)%']),
+            ("sog", [r'(?:Chutes ao Gol|Shots on Target|SOG)[:\s]*([\d.]+)', r'Remates ao Gol[:\s]*([\d.]+)']),
+            ("fin", [r'(?:Finalizações|Total Shots|Remates)[:\s]*([\d.]+)', r'Total de Finalizações[:\s]*([\d.]+)']),
+            ("esc", [r'(?:Escanteios|Corners|Cantos)[:\s]*([\d.]+)']),
+            ("cartoes", [r'(?:Cartões|Cards|Yellow Cards)[:\s]*([\d.]+)', r'Cartões Amarelos[:\s]*([\d.]+)']),
+            ("faltas", [r'(?:Faltas|Fouls)[:\s]*([\d.]+)']),
+        ]:
+            for p in patterns:
+                m = re.search(p, html, re.IGNORECASE)
+                if m: dados[nome] = float(m.group(1)); break
         jogos = []
-        jogos_pattern = r'(\d{2}/\d{2}).*?(\d+)\s*-\s*(\d+)'
-        for match in re.finditer(jogos_pattern, html):
-            jogos.append({
-                "gols_pro": int(match.group(2)),
-                "gols_contra": int(match.group(3)),
-            })
-        
+        for m in re.finditer(r'(\d{2}/\d{2}(?:/\d{2,4})?).*?(\d+)\s*[-–]\s*(\d+)', html):
+            jogos.append({"data": m.group(1), "gols_pro": int(m.group(2)), "gols_contra": int(m.group(3))})
+        if not jogos:
+            nome_norm = normalizar(nome_time)
+            for m in re.finditer(r'([A-Za-zÀ-ÿ\s]+)\s+(\d+)\s*[-–]\s*(\d+)\s+([A-Za-zÀ-ÿ\s]+)', html):
+                t1, g1, g2, t2 = m.group(1).strip(), int(m.group(2)), int(m.group(3)), m.group(4).strip()
+                if nome_norm in normalizar(t1): jogos.append({"gols_pro": g1, "gols_contra": g2, "adv": t2})
+                elif nome_norm in normalizar(t2): jogos.append({"gols_pro": g2, "gols_contra": g1, "adv": t1})
         if jogos:
             dados["ultimos_jogos"] = jogos[:5]
             dados["jogos_encontrados"] = len(jogos)
-        
         return dados
-        
     except Exception as e:
         st.warning(f"Redscores: {e}")
         return None
 
 def calcular_metricas_redscores(dados_redscores):
-    if not dados_redscores or "ultimos_jogos" not in dados_redscores:
-        return None
+    if not dados_redscores or "ultimos_jogos" not in dados_redscores: return None
     jogos = dados_redscores["ultimos_jogos"]
     if len(jogos) < 2: return None
     gols_pro = [j["gols_pro"] for j in jogos]
@@ -300,7 +268,6 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     checklist = {}
     DEF = DEFAULTS.get(normalizar(competicao), DEFAULTS["brasileirao"])
 
-    # 1. Redscores
     with st.spinner("🔍 Buscando dados no Redscores..."):
         dados_a = extrair_dados_redscores(time_a)
         dados_b = extrair_dados_redscores(time_b)
@@ -308,27 +275,20 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     if dados_a: st.success(f"✅ {time_a}: Redscores ({dados_a.get('jogos_encontrados', 0)} jogos)")
     if dados_b: st.success(f"✅ {time_b}: Redscores ({dados_b.get('jogos_encontrados', 0)} jogos)")
     
-    # 2. Fallback FBref
     if not dados_a or not dados_b:
         with st.spinner("⚠️ Redscores incompleto. Buscando FBref..."):
             fb = buscar_fbref(competicao)
         if not dados_a:
             dfb_a, _ = encontrar_time_fbref(time_a, fb) if fb else ({}, "default")
-            if dfb_a:
-                dados_a = {"xg": dfb_a.get("xg"), "xga": dfb_a.get("xga"), "fonte": "FBref"}
-                st.info(f"⚠️ {time_a}: FBref (fallback)")
+            if dfb_a: dados_a = {"xg": dfb_a.get("xg"), "xga": dfb_a.get("xga"), "fonte": "FBref"}
         if not dados_b:
             dfb_b, _ = encontrar_time_fbref(time_b, fb) if fb else ({}, "default")
-            if dfb_b:
-                dados_b = {"xg": dfb_b.get("xg"), "xga": dfb_b.get("xga"), "fonte": "FBref"}
-                st.info(f"⚠️ {time_b}: FBref (fallback)")
+            if dfb_b: dados_b = {"xg": dfb_b.get("xg"), "xga": dfb_b.get("xga"), "fonte": "FBref"}
 
-    # 3. Proteção contra None
     xg_a = dados_a.get("xg") if dados_a else None
     xga_a = dados_a.get("xga") if dados_a else None
     xg_b = dados_b.get("xg") if dados_b else None
     xga_b = dados_b.get("xga") if dados_b else None
-    
     xg_a = xg_a if xg_a is not None else DEF["xg"]
     xga_a = xga_a if xga_a is not None else DEF["xga"]
     xg_b = xg_b if xg_b is not None else DEF["xg"]
@@ -336,20 +296,16 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     
     fonte_a = dados_a.get("fonte", "default") if dados_a else "default"
     fonte_b = dados_b.get("fonte", "default") if dados_b else "default"
-    
     xg_a_disp = fonte_a != "default"
     xg_b_disp = fonte_b != "default"
     checklist["xg_time_a"] = xg_a_disp
     checklist["xg_time_b"] = xg_b_disp
     checklist["xg_disponivel"] = xg_a_disp and xg_b_disp
-    
     xg_label_a = f"{xg_a:.2f}" if xg_a_disp else f"{xg_a:.2f} (gols reais)"
     xg_label_b = f"{xg_b:.2f}" if xg_b_disp else f"{xg_b:.2f} (gols reais)"
 
-    # Métricas últimos jogos
     met_a = calcular_metricas_redscores(dados_a) if dados_a else None
     met_b = calcular_metricas_redscores(dados_b) if dados_b else None
-    
     if met_a: gols_a, cv_gols_a = met_a["gols"], met_a["cv_gols"]; checklist["dados_5_jogos"] = True
     else: gols_a, cv_gols_a = DEF["gols"], 35.0
     if met_b: gols_b, cv_gols_b = met_b["gols"], met_b["cv_gols"]; checklist["dados_5_jogos"] = True
@@ -572,7 +528,7 @@ else:
 st.markdown("<hr style='border-color:#2A3F55;margin:12px 0'>", unsafe_allow_html=True)
 
 time_a = st.text_input("🟢 Time Mandante", placeholder="Ex: cruzeiro")
-time_b = st.text_input("🔴 Time Visitante", placeholder="Ex: flamengo")
+time_b = st.text_input("🔴 Time Visitante", placeholder="Ex: fluminense")
 competicao = st.selectbox("🏆 Competição", list(FBREF_IDS.keys()))
 
 with st.expander("📋 Contexto da Partida (Regra 4 e 6C)"):
