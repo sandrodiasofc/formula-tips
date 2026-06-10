@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-FORMULA TIPS V4.1 — VERSÃO ESTÁVEL (SEM PLAYWRIGHT)
+FORMULA TIPS V4.1 — VERSÃO ESTÁVEL (FBREF + MAPEAMENTO DE NOMES)
 10 Regras | 9 Seções | 16 Itens Checklist
-Fonte: FBref (xG/xGA via requests) + Fallbacks inteligentes
+Fonte: FBref (xG/xGA + últimos jogos) + Fallbacks inteligentes
 Odds: Entrada Manual (Regra 1)
 """
 
-import math, time, os, json, unicodedata
+import math, time, os, re, json, unicodedata
 from datetime import datetime
 from pathlib import Path
 
@@ -71,16 +71,49 @@ DEFAULTS = {
     "sul-americana": {"xg":1.35,"xga":1.35,"gols":1.35,"sog":4.4,"fin":11.5,"esc":5.0,"faltas":25.0},
 }
 
+# ========== MAPEAMENTO DE NOMES (Português → Inglês FBref) ==========
+NOMES_FBREF = {
+    "flamengo": "flamengo", "palmeiras": "palmeiras",
+    "atletico mineiro": "atletico mineiro", "atlético mineiro": "atletico mineiro",
+    "atletico-mg": "atletico mineiro", "atlético-mg": "atletico mineiro",
+    "cruzeiro": "cruzeiro", "gremio": "gremio", "grêmio": "gremio",
+    "internacional": "internacional", "sao paulo": "sao paulo", "são paulo": "sao paulo",
+    "corinthians": "corinthians", "fluminense": "fluminense",
+    "botafogo": "botafogo", "vasco": "vasco da gama", "vasco da gama": "vasco da gama",
+    "bragantino": "bragantino", "red bull bragantino": "bragantino",
+    "athletico paranaense": "athletico paranaense", "athletico-pr": "athletico paranaense",
+    "bahia": "bahia", "fortaleza": "fortaleza", "ceara": "ceara", "ceará": "ceara",
+    "sport": "sport recife", "sport recife": "sport recife",
+    "vitoria": "vitoria", "vitória": "vitoria", "chapecoense": "chapecoense",
+    "criciuma": "criciuma", "criciúma": "criciuma", "juventude": "juventude",
+    "cuiaba": "cuiaba", "cuiabá": "cuiaba",
+    "atletico goianiense": "atletico goianiense", "atlético go": "atletico goianiense",
+    "goias": "goias", "goiás": "goias", "mirassol": "mirassol",
+    "remo": "remo", "coritiba": "coritiba", "novorizontino": "novorizontino",
+    "ponte preta": "ponte preta", "vila nova": "vila nova",
+    "londrina": "londrina", "crb": "crb", "avai": "avai", "avaí": "avai",
+    "nautico": "nautico", "náutico": "nautico",
+    "américa mineiro": "america mineiro", "america mineiro": "america mineiro",
+    "sao bernardo": "sao bernardo", "são bernardo": "sao bernardo",
+    "operario pr": "operario ferroviario", "operário pr": "operario ferroviario",
+    "athletic club": "athletic club", "botafogo sp": "botafogo sp",
+    "ferroviaria": "ferroviaria", "ferroviária": "ferroviaria",
+    "volta redonda": "volta redonda",
+}
+
 # ========== UTILITÁRIOS ==========
 def normalizar(texto):
     return unicodedata.normalize("NFD", texto.lower().strip()).encode("ascii", "ignore").decode("ascii")
 
-def encontrar(nome, dados):
-    if not dados: return {}, "default"
-    chave = nome.lower().strip()
-    if chave in dados: return dados[chave], "encontrado"
-    for k, v in dados.items():
-        if chave in k or k in chave: return v, "encontrado"
+def encontrar_time_fbref(nome_time: str, dados_fbref: dict):
+    if not dados_fbref: return {}, "default"
+    nome_normalizado = normalizar(nome_time)
+    if nome_normalizado in dados_fbref: return dados_fbref[nome_normalizado], "FBref"
+    nome_mapeado = NOMES_FBREF.get(nome_normalizado, nome_normalizado)
+    if nome_mapeado in dados_fbref: return dados_fbref[nome_mapeado], "FBref"
+    for k, v in dados_fbref.items():
+        if nome_normalizado in k or k in nome_normalizado: return v, "FBref"
+        if nome_mapeado in k or k in nome_mapeado: return v, "FBref"
     return {}, "default"
 
 def poisson(lmbda, k):
@@ -130,7 +163,7 @@ def buscar_fbref(competicao: str) -> dict:
     headers = {"User-Agent": "Mozilla/5.0"}
     dados = {}
     try:
-        time.sleep(4)
+        time.sleep(3)
         resp = requests.get(url, headers=headers, timeout=30)
         if resp.status_code != 200: return {}
         tabelas = pd.read_html(StringIO(resp.text))
@@ -159,6 +192,62 @@ def buscar_fbref(competicao: str) -> dict:
     except: pass
     return dados
 
+# ========== BUSCAR ÚLTIMOS JOGOS ==========
+@st.cache_data(ttl=1800, show_spinner=False)
+def buscar_ultimos_jogos(nome_time: str, competicao: str, condicao: str = "home", limite: int = 5) -> list:
+    comp_id = FBREF_IDS.get(normalizar(competicao))
+    if not comp_id: return []
+    url = f"https://fbref.com/en/comps/{comp_id}/schedule/"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        time.sleep(3)
+        resp = requests.get(url, headers=headers, timeout=30)
+        if resp.status_code != 200: return []
+        tabelas = pd.read_html(StringIO(resp.text))
+        jogos = []
+        time_norm = normalizar(nome_time)
+        time_mapeado = NOMES_FBREF.get(time_norm, time_norm)
+        for df in tabelas:
+            cols = [str(c).lower() for c in df.columns]
+            home_col = next((c for c in df.columns if "home" in c.lower()), None)
+            away_col = next((c for c in df.columns if "away" in c.lower()), None)
+            score_col = next((c for c in df.columns if "score" in c.lower()), None)
+            if not (home_col and score_col): continue
+            for _, row in df.iterrows():
+                try:
+                    home_team = str(row[home_col]).strip()
+                    away_team = str(row[away_col]).strip() if away_col else ""
+                    home_norm = normalizar(home_team)
+                    away_norm = normalizar(away_team) if away_team else ""
+                    if time_norm not in home_norm and time_norm not in away_norm and time_mapeado not in home_norm and time_mapeado not in away_norm: continue
+                    if condicao == "home" and time_norm not in home_norm and time_mapeado not in home_norm: continue
+                    if condicao == "away" and time_norm not in away_norm and time_mapeado not in away_norm: continue
+                    placar = str(row[score_col]).strip()
+                    nums = re.findall(r'\d+', placar)
+                    if len(nums) >= 2:
+                        gh, ga = int(nums[0]), int(nums[1])
+                        if time_norm in home_norm or time_mapeado in home_norm:
+                            jogos.append({"gols_pro": gh, "gols_contra": ga, "adv": away_team})
+                        else:
+                            jogos.append({"gols_pro": ga, "gols_contra": gh, "adv": home_team})
+                except: continue
+                if len(jogos) >= limite: break
+            if len(jogos) >= limite: break
+        return jogos[:limite]
+    except: return []
+
+def calcular_metricas_ultimos_jogos(jogos: list) -> dict:
+    if not jogos or len(jogos) < 2: return None
+    gols_pro = [j["gols_pro"] for j in jogos]
+    gols_contra = [j["gols_contra"] for j in jogos]
+    def media_cv(valores):
+        m = np.mean(valores); dp = np.std(valores, ddof=0)
+        cv = (dp / m * 100) if m > 0 else 0
+        return m, cv
+    m_gols, cv_gols = media_cv(gols_pro)
+    m_sof, _ = media_cv(gols_contra)
+    return {"gols": round(m_gols, 1), "cv_gols": round(cv_gols, 0), "sofridos": round(m_sof, 1), "jogos": len(jogos)}
+
 # ========== MONTE CARLO ==========
 def monte_carlo(l1, l2, cv1=35, cv2=35, n=10000):
     np.random.seed(42)
@@ -171,8 +260,7 @@ def monte_carlo(l1, l2, cv1=35, cv2=35, n=10000):
         if np.random.random() < 0.05:
             if np.random.random() < 0.5: ll1 = max(0.05, ll1 - 0.5)
             else: ll2 = max(0.05, ll2 - 0.5)
-        if np.random.random() < 0.10:
-            ll1 += 0.15; ll2 += 0.15
+        if np.random.random() < 0.10: ll1 += 0.15; ll2 += 0.15
         if np.random.random() < 0.15:
             if favorito == "t1": ll1 = max(0.05, ll1 - 0.3)
             else: ll2 = max(0.05, ll2 - 0.3)
@@ -197,8 +285,8 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
 
     DEF = DEFAULTS.get(normalizar(competicao), DEFAULTS["brasileirao"])
 
-    dfb_a, fonte_fb_a = encontrar(time_a, fb)
-    dfb_b, fonte_fb_b = encontrar(time_b, fb)
+    dfb_a, fonte_fb_a = encontrar_time_fbref(time_a, fb)
+    dfb_b, fonte_fb_b = encontrar_time_fbref(time_b, fb)
 
     xg_a = dfb_a.get("xg") or DEF["xg"]
     xga_a = dfb_a.get("xga") or DEF["xga"]
@@ -217,14 +305,30 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     xg_label_a = f"{xg_a:.2f}" if xg_a_disp else f"{xg_a:.2f} (gols reais)"
     xg_label_b = f"{xg_b:.2f}" if xg_b_disp else f"{xg_b:.2f} (gols reais)"
 
-    gols_a, gols_b = DEF["gols"], DEF["gols"]
+    # Buscar últimos jogos
+    jogos_a = buscar_ultimos_jogos(time_a, competicao, "home")
+    jogos_b = buscar_ultimos_jogos(time_b, competicao, "away")
+    met_a = calcular_metricas_ultimos_jogos(jogos_a)
+    met_b = calcular_metricas_ultimos_jogos(jogos_b)
+
+    if met_a:
+        gols_a, cv_gols_a = met_a["gols"], met_a["cv_gols"]
+        checklist["dados_5_jogos"] = True
+    else:
+        gols_a, cv_gols_a = DEF["gols"], 35.0
+
+    if met_b:
+        gols_b, cv_gols_b = met_b["gols"], met_b["cv_gols"]
+        checklist["dados_5_jogos"] = True
+    else:
+        gols_b, cv_gols_b = DEF["gols"], 35.0
+
     sog_a, sog_b = DEF["sog"], DEF["sog"]
     fin_a, fin_b = DEF["fin"], DEF["fin"]
     esc_a, esc_b = DEF["esc"], DEF["esc"]
     faltas_a, faltas_b = DEF["faltas"], DEF["faltas"]
-    cv_gols_a = cv_gols_b = cv_sog_a = cv_sog_b = cv_fin_a = cv_fin_b = 35.0
+    cv_sog_a = cv_sog_b = cv_fin_a = cv_fin_b = 35.0
 
-    checklist["dados_5_jogos"] = False
     checklist["fin_verificado"] = False
     checklist["faltas_verificado"] = False
     checklist["posse_verificado"] = False
@@ -293,8 +397,7 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
 
     n_ok = sum(1 for v in checklist.values() if v)
     alta_incerteza = n_ok < 10 or cv_gols_a >= 60 or cv_gols_b >= 60
-    if alta_incerteza:
-        alertas.insert(0, "⚠️ ALTA INCERTEZA — Stake reduzido a 0.5% do bank")
+    if alta_incerteza: alertas.insert(0, "⚠️ ALTA INCERTEZA — Stake reduzido a 0.5% do bank")
 
     def nota_ef(sog, fin, gols):
         if fin == 0: return 50
@@ -303,11 +406,8 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
 
     # ========== RENDER ==========
     st.markdown(f'<div class="match-header"><div class="match-title">{time_a.upper()} × {time_b.upper()}</div><div class="match-comp">🏆 {competicao}</div></div>', unsafe_allow_html=True)
-
-    if alta_incerteza:
-        st.markdown('<div class="incerteza">⚠️ ALTA INCERTEZA — Aposte no máximo 0.5% do bank</div>', unsafe_allow_html=True)
-    for al in alertas:
-        st.markdown(f'<div class="alert-box">{al}</div>', unsafe_allow_html=True)
+    if alta_incerteza: st.markdown('<div class="incerteza">⚠️ ALTA INCERTEZA — Aposte no máximo 0.5% do bank</div>', unsafe_allow_html=True)
+    for al in alertas: st.markdown(f'<div class="alert-box">{al}</div>', unsafe_allow_html=True)
 
     # 1. Ajuste por Variância
     html = f"""<table><tr><th>Métrica</th><th>Time</th><th>CV</th><th>Ação</th></tr>
@@ -362,23 +462,17 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     ]:
         cor = "#4CAF50" if val > 0.6 else ("#C9A84C" if val > 0.45 else "#EF5350")
         html += srow(label, barra(val * 100, cor), f"{val*100:.1f}% — {rec}")
-
     html += "<p style='color:#C9A84C;font-weight:600;margin-top:10px'>🎯 FINALIZAÇÕES</p>"
     html += srow("Média Combinada", barra((fin_a + fin_b) / 30 * 100, "#C9A84C"), f"{fin_a + fin_b:.0f} por jogo")
-
     html += "<p style='color:#C9A84C;font-weight:600;margin-top:10px'>🚩 ESCANTEIOS</p>"
     html += srow("Média Combinada", barra((esc_a + esc_b) / 15 * 100, "#C9A84C"), f"{esc_a + esc_b:.0f} por jogo")
-
     html += "<p style='color:#C9A84C;font-weight:600;margin-top:10px'>🟨 CARTÕES</p>"
     html += srow("Over 1.5 (Linha Segura)", barra(90, "#4CAF50"), "90% ✅")
     html += srow("Under 9.5 (Linha Segura)", barra(96, "#4CAF50"), "96% 🔒")
-
     html += "<p style='color:#C9A84C;font-weight:600;margin-top:10px'>🟨 FALTAS</p>"
     html += srow("Média Combinada", barra((faltas_a + faltas_b) / 40 * 100, "#C9A84C"), f"{faltas_a + faltas_b:.0f} por jogo")
-
     html += "<p style='color:#C9A84C;font-weight:600;margin-top:10px'>🥅 CHUTES A GOL (SOG)</p>"
     html += srow("Média Combinada", barra((sog_a + sog_b) / 15 * 100, "#C9A84C"), f"{sog_a + sog_b:.0f} por jogo")
-
     st.markdown(card("6. Tabela de Sugestões", html), unsafe_allow_html=True)
 
     # 7. Confluência
@@ -435,7 +529,7 @@ if os.path.exists(logo_path):
     with col_logo: st.image(logo_path, width=90)
     with col_titulo:
         st.markdown("<h1 style='margin:0;padding-top:8px;color:#F0F0F0'>FORMULA TIPS V4.1</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='color:#C9A84C;margin:0;font-size:14px'>Versão Estável — FBref + Fallbacks</p>", unsafe_allow_html=True)
+        st.markdown("<p style='color:#C9A84C;margin:0;font-size:14px'>Versão Estável — FBref + Últimos Jogos</p>", unsafe_allow_html=True)
 else:
     st.markdown("<h1 style='color:#F0F0F0;margin:0'>FORMULA TIPS V4.1</h1>", unsafe_allow_html=True)
 
