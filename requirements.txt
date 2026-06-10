@@ -2,4 +2,5 @@ streamlit
 numpy
 requests
 pandas
-playwright
+lxml
+html5lib
