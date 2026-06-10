@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-FORMULA TIPS V4.1 — VERSÃO ESTÁVEL (COM CORREÇÃO WHOSCORED)
-10 Regras | 9 Seções | 16 Itens Checklist | Dados Validados com Fallbacks
-Fontes: WhoScored (xG/xGA) + FBref (xG/xGA fallback)
+FORMULA TIPS V4.1 — VERSÃO ESTÁVEL (SEM PLAYWRIGHT)
+10 Regras | 9 Seções | 16 Itens Checklist
+Fonte: FBref (xG/xGA via requests) + Fallbacks inteligentes
 Odds: Entrada Manual (Regra 1)
 """
 
@@ -15,7 +15,6 @@ import streamlit as st
 import requests
 import pandas as pd
 from io import StringIO
-from playwright.sync_api import sync_playwright
 
 # ========== CONFIGURAÇÃO SEGURA ==========
 try:
@@ -55,17 +54,6 @@ td { color: #F0F0F0; padding: 5px 8px; border-bottom: 1px solid #1a2d3d; }
 """
 
 # ========== URLS ==========
-WHOSCORED_URLS = {
-    "brasileirao": "https://br.whoscored.com/regions/31/tournaments/95/seasons/10980/stages/25039/teamstatistics/brasil-brasileir%C3%A3o-2026",
-    "premier league": "https://br.whoscored.com/regions/252/tournaments/2/teamstatistics/inglaterra-premier-league-2025-2026",
-    "champions league": "https://br.whoscored.com/regions/250/tournaments/12/teamstatistics/champions-league-2025-2026",
-    "la liga": "https://br.whoscored.com/regions/206/tournaments/4/teamstatistics/espanha-la-liga-2025-2026",
-    "serie a": "https://br.whoscored.com/regions/108/tournaments/5/teamstatistics/italia-serie-a-2025-2026",
-    "bundesliga": "https://br.whoscored.com/regions/81/tournaments/3/teamstatistics/alemanha-bundesliga-2025-2026",
-    "ligue 1": "https://br.whoscored.com/regions/74/tournaments/6/teamstatistics/franca-ligue-1-2025-2026",
-    "sul-americana": "https://br.whoscored.com/regions/250/tournaments/331/teamstatistics/copa-sul-americana-2026",
-}
-
 FBREF_IDS = {
     "brasileirao": "24", "premier league": "9", "champions league": "8",
     "la liga": "12", "serie a": "11", "bundesliga": "20",
@@ -133,111 +121,7 @@ def srow(label, bar, value):
 def card(title, content):
     return f'<div class="card"><div class="card-title">{title}</div>{content}</div>'
 
-# ========== BROWSER ==========
-def novo_browser():
-    p = sync_playwright().start()
-    browser = p.chromium.launch(headless=True, args=["--no-sandbox","--disable-blink-features=AutomationControlled"])
-    ctx = browser.new_context(
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        locale="pt-BR", viewport={"width": 1366, "height": 768},
-    )
-    ctx.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-    return p, browser, ctx
-
-# ========== WHOSCORED (CORRIGIDO) ==========
-@st.cache_data(ttl=3600, show_spinner=False)
-def buscar_whoscored(competicao: str) -> dict:
-    """Busca xG e xGA de todos os times no WhoScored."""
-    url = WHOSCORED_URLS.get(normalizar(competicao))
-    if not url:
-        return {}
-    
-    p = browser = ctx = None
-    dados = {}
-    
-    try:
-        p, browser, ctx = novo_browser()
-        page = ctx.new_page()
-        page.route("**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,mp4}", lambda r: r.abort())
-        page.goto(url, wait_until="networkidle", timeout=60000)
-        time.sleep(5)
-        
-        try: page.click("button:has-text('Accept')", timeout=4000); time.sleep(1)
-        except:
-            try: page.click("button:has-text('Aceitar')", timeout=3000); time.sleep(1)
-            except: pass
-        
-        # Múltiplos seletores para encontrar a tabela
-        selectores = [
-            "#top-team-stats-summary-grid",
-            "table.stats-table",
-            "div#statistics-table-outright table",
-            "div[id*='statistics'] table",
-            "table[class*='team']",
-        ]
-        
-        tabela_encontrada = False
-        for seletor in selectores:
-            try:
-                page.wait_for_selector(seletor, timeout=10000)
-                tabela_encontrada = True
-                break
-            except:
-                continue
-        
-        if not tabela_encontrada:
-            try: page.wait_for_selector("table", timeout=10000)
-            except: return {}
-        
-        time.sleep(3)
-        tabelas = page.query_selector_all("table")
-        
-        for tabela in tabelas:
-            rows = tabela.query_selector_all("tbody tr")
-            if len(rows) == 0: continue
-            
-            for row in rows:
-                try:
-                    nome_el = row.query_selector("td a.team-link") or row.query_selector("td a") or row.query_selector("td:first-child")
-                    if not nome_el: continue
-                    
-                    nome = nome_el.inner_text().strip().lower()
-                    if len(nome) < 3 or nome in ("team", "squad", "time"): continue
-                    
-                    cells = row.query_selector_all("td")
-                    valores = []
-                    for cell in cells:
-                        texto = cell.inner_text().strip()
-                        try:
-                            valor = float(texto.replace(",", ".").replace("%", ""))
-                            valores.append(valor)
-                        except:
-                            valores.append(texto)
-                    
-                    xg_val = xga_val = None
-                    for v in valores:
-                        if isinstance(v, (int, float)) and 0.3 <= v <= 4.0:
-                            if xg_val is None: xg_val = v
-                            elif xga_val is None and v != xg_val:
-                                xga_val = v
-                                break
-                    
-                    if xg_val is not None and xga_val is not None:
-                        dados[nome] = {"xg": round(xg_val, 2), "xga": round(xga_val, 2), "fonte": "WhoScored"}
-                except:
-                    continue
-            
-            if len(dados) >= 5: break
-        
-    except Exception as e:
-        st.warning(f"WhoScored: {e}")
-    finally:
-        try: browser.close(); p.stop()
-        except: pass
-    
-    return dados
-
-# ========== FBREF ==========
+# ========== FBREF (FONTE PRINCIPAL) ==========
 @st.cache_data(ttl=3600, show_spinner=False)
 def buscar_fbref(competicao: str) -> dict:
     comp_id = FBREF_IDS.get(normalizar(competicao))
@@ -308,24 +192,21 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     alertas = []
     checklist = {}
 
-    with st.spinner("🔍 Buscando dados em WhoScored + FBref..."):
-        ws = buscar_whoscored(competicao)
+    with st.spinner("🔍 Buscando dados no FBref..."):
         fb = buscar_fbref(competicao)
 
     DEF = DEFAULTS.get(normalizar(competicao), DEFAULTS["brasileirao"])
 
-    dws_a, fonte_a = encontrar(time_a, ws)
-    dws_b, fonte_b = encontrar(time_b, ws)
     dfb_a, fonte_fb_a = encontrar(time_a, fb)
     dfb_b, fonte_fb_b = encontrar(time_b, fb)
 
-    xg_a = dws_a.get("xg") or dfb_a.get("xg") or DEF["xg"]
-    xga_a = dws_a.get("xga") or dfb_a.get("xga") or DEF["xga"]
-    xg_b = dws_b.get("xg") or dfb_b.get("xg") or DEF["xg"]
-    xga_b = dws_b.get("xga") or dfb_b.get("xga") or DEF["xga"]
+    xg_a = dfb_a.get("xg") or DEF["xg"]
+    xga_a = dfb_a.get("xga") or DEF["xga"]
+    xg_b = dfb_b.get("xg") or DEF["xg"]
+    xga_b = dfb_b.get("xga") or DEF["xga"]
 
-    fonte_xg_a = dws_a.get("fonte") or dfb_a.get("fonte") or "default"
-    fonte_xg_b = dws_b.get("fonte") or dfb_b.get("fonte") or "default"
+    fonte_xg_a = dfb_a.get("fonte") or "default"
+    fonte_xg_b = dfb_b.get("fonte") or "default"
 
     xg_a_disp = fonte_xg_a != "default"
     xg_b_disp = fonte_xg_b != "default"
@@ -447,7 +328,7 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     st.markdown(card("2. Poisson Ajustado", html), unsafe_allow_html=True)
 
     # 3. Monte Carlo
-    html = f"""<p style='color:#A0B4C8;font-size:12px'>10.000 simulações com ruído (expulsões, gol precoce, recuo, CV)</p>
+    html = f"""<p style='color:#A0B4C8;font-size:12px'>10.000 simulações com ruído</p>
     <table><tr><th>Resultado</th><th>Poisson</th><th>Monte Carlo</th></tr>
     <tr><td>Vit. {time_a}</td><td>{v1*100:.1f}%</td><td>{mc['v1']*100:.1f}%</td></tr>
     <tr><td>Empate</td><td>{e*100:.1f}%</td><td>{mc['emp']*100:.1f}%</td></tr>
@@ -554,7 +435,7 @@ if os.path.exists(logo_path):
     with col_logo: st.image(logo_path, width=90)
     with col_titulo:
         st.markdown("<h1 style='margin:0;padding-top:8px;color:#F0F0F0'>FORMULA TIPS V4.1</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='color:#C9A84C;margin:0;font-size:14px'>Versão Estável — Fallbacks Inteligentes</p>", unsafe_allow_html=True)
+        st.markdown("<p style='color:#C9A84C;margin:0;font-size:14px'>Versão Estável — FBref + Fallbacks</p>", unsafe_allow_html=True)
 else:
     st.markdown("<h1 style='color:#F0F0F0;margin:0'>FORMULA TIPS V4.1</h1>", unsafe_allow_html=True)
 
@@ -562,7 +443,7 @@ st.markdown("<hr style='border-color:#2A3F55;margin:12px 0'>", unsafe_allow_html
 
 time_a = st.text_input("🟢 Time Mandante", placeholder="Ex: Flamengo")
 time_b = st.text_input("🔴 Time Visitante", placeholder="Ex: Palmeiras")
-competicao = st.selectbox("🏆 Competição", list(WHOSCORED_URLS.keys()))
+competicao = st.selectbox("🏆 Competição", list(FBREF_IDS.keys()))
 
 with st.expander("📋 Contexto da Partida (Regra 4 e 6C)"):
     c1, c2 = st.columns(2)
