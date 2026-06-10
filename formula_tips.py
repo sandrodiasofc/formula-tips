@@ -466,4 +466,129 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     # 5. Value Bets
     html = "<table><tr><th>Mercado</th><th>Prob.</th><th>Odd</th><th>EV%</th><th>Kelly</th><th>Stake</th></tr>"
     for m in mercados:
-        cor = "#4CAF50" if m["ev"]>0.005 else ("#C9A84C" if m["ev"]>0 else
+        cor = "#4CAF50" if m["ev"]>0.005 else ("#C9A84C" if m["ev"]>0 else "#EF5350")
+        html += f"<tr><td>{m['nome']}</td><td>{m['prob']*100:.1f}%</td><td>{m['odd']:.2f}</td><td style='color:{cor}'>{m['ev']*100:+.1f}%</td><td>{m['kelly']:.3f}</td><td>{m['stake']:.1f}%</td></tr>"
+    html += "</table>"
+    st.markdown(card("5. Value Bets — Kelly 33% (Regra 5)", html), unsafe_allow_html=True)
+
+    # 6. Tabela de Sugestões
+    html = "<p style='color:#C9A84C;font-weight:600'>⚽ GOLS</p>"
+    for label, val, rec in [
+        ("Over 1.5", over15, "✅ Conservador"), ("Under 1.5", under15, "🛡️ Proteção"),
+        ("Over 2.5", over25, "✅ Valor" if over25_seguro else "⚠️ Cautela"),
+        ("Under 2.5", under25, "🔒 Âncora" if under25_seguro else "⚠️ Cautela"),
+        ("Under 4.5", under45, "🔒 Âncora"),
+    ]:
+        cor = "#4CAF50" if val > 0.6 else ("#C9A84C" if val > 0.45 else "#EF5350")
+        html += srow(label, barra(val * 100, cor), f"{val*100:.1f}% — {rec}")
+
+    html += "<p style='color:#C9A84C;font-weight:600;margin-top:10px'>🎯 FINALIZAÇÕES</p>"
+    html += srow("Média Combinada", barra((fin_a + fin_b) / 30 * 100, "#C9A84C"), f"{fin_a + fin_b:.0f} por jogo")
+
+    html += "<p style='color:#C9A84C;font-weight:600;margin-top:10px'>🚩 ESCANTEIOS</p>"
+    html += srow("Média Combinada", barra((esc_a + esc_b) / 15 * 100, "#C9A84C"), f"{esc_a + esc_b:.0f} por jogo")
+
+    html += "<p style='color:#C9A84C;font-weight:600;margin-top:10px'>🟨 CARTÕES</p>"
+    html += srow("Over 1.5 (Linha Segura)", barra(90, "#4CAF50"), "90% ✅")
+    html += srow("Under 9.5 (Linha Segura)", barra(96, "#4CAF50"), "96% 🔒")
+
+    html += "<p style='color:#C9A84C;font-weight:600;margin-top:10px'>🟨 FALTAS</p>"
+    html += srow("Média Combinada", barra((faltas_a + faltas_b) / 40 * 100, "#C9A84C"), f"{faltas_a + faltas_b:.0f} por jogo")
+
+    html += "<p style='color:#C9A84C;font-weight:600;margin-top:10px'>🥅 CHUTES A GOL (SOG)</p>"
+    html += srow("Média Combinada", barra((sog_a + sog_b) / 15 * 100, "#C9A84C"), f"{sog_a + sog_b:.0f} por jogo")
+
+    st.markdown(card("6. Tabela de Sugestões", html), unsafe_allow_html=True)
+
+    # 7. Confluência
+    xg_comb = xg_a + xg_b
+    if xg_comb > 3.5: classif = "Explosão"
+    elif xg_comb > 2.8: classif = "Aberto"
+    elif xg_comb > 2.0: classif = "Equilibrado"
+    else: classif = "Travado"
+    mercado_sug = "Over escanteios + BTTS" if classif in ["Explosão", "Aberto"] else "Under gols + Cartões"
+    conv = "✅ Convergente" if (over25_seguro and over25 > 0.5) or (not over25_seguro and over25 < 0.5) else "⚠️ Divergente"
+    html = f"""<table>
+    <tr><td class='stat-label'>Classificação</td><td class='stat-value'>{classif}</td></tr>
+    <tr><td class='stat-label'>Mercado sugerido</td><td class='stat-value'>{mercado_sug}</td></tr>
+    <tr><td class='stat-label'>Status</td><td class='stat-value'>{conv}</td></tr></table>"""
+    st.markdown(card("7. Confluência com Modelo Qualitativo", html), unsafe_allow_html=True)
+
+    # 8. Confiança Geral
+    nivel = "⚠️ ALTA INCERTEZA" if alta_incerteza else ("Alta" if n_ok >= 12 else ("Media" if n_ok >= 9 else "Baixa"))
+    stake_geral = "0.5%" if alta_incerteza else ("2-3%" if nivel == "Alta" else ("1-2%" if nivel == "Media" else "0.5-1%"))
+    html = f"""<table>
+    <tr><td class='stat-label'>Nível</td><td class='stat-value' style='color:{"#EF5350" if alta_incerteza else "#4CAF50"}'>{nivel}</td></tr>
+    <tr><td class='stat-label'>Stake recomendado</td><td class='stat-value'>{stake_geral} do bank</td></tr></table>
+    <table style='margin-top:8px'><tr><th>Check (16 itens)</th><th>Status</th></tr>
+    {''.join(f"<tr><td>{k.replace('_',' ').title()}</td><td>{'✅' if v else '❌'}</td></tr>" for k, v in checklist.items())}</table>"""
+    st.markdown(card("8. Confiança Geral (Regra 5)", html), unsafe_allow_html=True)
+
+    # 9. CSV
+    vb_top = max(mercados, key=lambda m: m["ev"])
+    csv = pd.DataFrame([{
+        "time1": time_a, "time2": time_b,
+        "data": datetime.now().strftime("%Y-%m-%d"), "competicao": competicao,
+        "mercado": vb_top["nome"], "odd_mercado": round(vb_top["odd"], 2),
+        "odd_justa": round(1 / vb_top["prob"], 2) if vb_top["prob"] > 0 else None,
+        "value": "Sim" if vb_top["ev"] > 0 else "Nao",
+        "stake": f'{vb_top["stake"]:.1f}%', "banca_ini": 1000.00,
+        "banca_fim": "", "resultado": "", "acerto": "", "v4.1_confianca": nivel
+    }])
+    st.dataframe(csv, use_container_width=True)
+    st.download_button("📥 Baixar CSV", csv.to_csv(index=False).encode("utf-8"), file_name="formula_tips_v41.csv", mime="text/csv")
+
+    try:
+        hist = json.loads(HISTORICO_FILE.read_text()) if HISTORICO_FILE.exists() else []
+        hist.insert(0, {"data": datetime.now().strftime("%d/%m/%Y %H:%M"), "time_a": time_a, "time_b": time_b, "competicao": competicao, "v1": round(v1*100,1), "emp": round(e*100,1), "v2": round(v2*100,1), "nivel": nivel})
+        HISTORICO_FILE.write_text(json.dumps(hist[:20], ensure_ascii=False, indent=2))
+    except: pass
+
+# ========== UI ==========
+st.set_page_config(page_title="FORMULA TIPS V4.1", page_icon="⚽", layout="centered")
+st.markdown(CSS, unsafe_allow_html=True)
+
+logo_path = "logotipo formula tips 01.png"
+if os.path.exists(logo_path):
+    col_logo, col_titulo = st.columns([1, 3])
+    with col_logo: st.image(logo_path, width=90)
+    with col_titulo:
+        st.markdown("<h1 style='margin:0;padding-top:8px;color:#F0F0F0'>FORMULA TIPS V4.1</h1>", unsafe_allow_html=True)
+        st.markdown("<p style='color:#C9A84C;margin:0;font-size:14px'>Versão Estável — Fallbacks Inteligentes</p>", unsafe_allow_html=True)
+else:
+    st.markdown("<h1 style='color:#F0F0F0;margin:0'>FORMULA TIPS V4.1</h1>", unsafe_allow_html=True)
+
+st.markdown("<hr style='border-color:#2A3F55;margin:12px 0'>", unsafe_allow_html=True)
+
+time_a = st.text_input("🟢 Time Mandante", placeholder="Ex: Flamengo")
+time_b = st.text_input("🔴 Time Visitante", placeholder="Ex: Palmeiras")
+competicao = st.selectbox("🏆 Competição", list(WHOSCORED_URLS.keys()))
+
+with st.expander("📋 Contexto da Partida (Regra 4 e 6C)"):
+    c1, c2 = st.columns(2)
+    with c1:
+        t1_sem = st.checkbox(f"{time_a or 'Mandante'} sem objetivo")
+        t1_res = st.checkbox(f"{time_a or 'Mandante'} time reserva")
+        t1_des = st.checkbox(f"{time_a or 'Mandante'} desespero")
+    with c2:
+        t2_sem = st.checkbox(f"{time_b or 'Visitante'} sem objetivo")
+        t2_adm = st.checkbox(f"{time_b or 'Visitante'} administra resultado")
+
+with st.expander("💰 Odds (Regra 1 — Menores do Mercado)"):
+    c1, c2, c3 = st.columns(3)
+    with c1: odd_v1 = st.number_input("Vit Casa", 1.01, 20.0, 2.00, 0.01, format="%.2f")
+    with c2: odd_emp = st.number_input("Empate", 1.01, 20.0, 3.20, 0.01, format="%.2f")
+    with c3: odd_v2 = st.number_input("Vit Fora", 1.01, 20.0, 3.50, 0.01, format="%.2f")
+
+if st.button("⚡ ANALISAR AGORA", use_container_width=True):
+    if not time_a or not time_b:
+        st.warning("Preencha os nomes dos dois times.")
+    else:
+        ctx = {"t1_sem_obj": t1_sem, "t1_reserva": t1_res, "t1_desespero": t1_des, "t2_sem_obj": t2_sem, "t2_admin": t2_adm}
+        analisar(time_a, time_b, competicao, odd_v1, odd_emp, odd_v2, ctx)
+
+if HISTORICO_FILE.exists():
+    with st.expander("📊 Histórico de Análises"):
+        hist = json.loads(HISTORICO_FILE.read_text())
+        for h in hist[:10]:
+            st.caption(f"{h['data']} — {h['time_a']} x {h['time_b']} ({h['competicao']}) — {h['nivel']}")
