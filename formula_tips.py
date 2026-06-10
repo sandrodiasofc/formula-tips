@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-FORMULA TIPS V4.1 — VERSÃO ESTÁVEL (FBREF + MAPEAMENTO DE NOMES)
+FORMULA TIPS V4.1 — VERSÃO ESTÁVEL (FBREF + REDSCORES)
 10 Regras | 9 Seções | 16 Itens Checklist
-Fonte: FBref (xG/xGA + últimos jogos) + Fallbacks inteligentes
+Fontes: FBref (fallback) + Redscores (dados por jogo)
 Odds: Entrada Manual (Regra 1)
 """
 
@@ -71,50 +71,34 @@ DEFAULTS = {
     "sul-americana": {"xg":1.35,"xga":1.35,"gols":1.35,"sog":4.4,"fin":11.5,"esc":5.0,"faltas":25.0},
 }
 
-# ========== MAPEAMENTO DE NOMES (Português → Inglês FBref) ==========
-NOMES_FBREF = {
-    "flamengo": "flamengo", "palmeiras": "palmeiras",
-    "atletico mineiro": "atletico mineiro", "atlético mineiro": "atletico mineiro",
-    "atletico-mg": "atletico mineiro", "atlético-mg": "atletico mineiro",
-    "cruzeiro": "cruzeiro", "gremio": "gremio", "grêmio": "gremio",
-    "internacional": "internacional", "sao paulo": "sao paulo", "são paulo": "sao paulo",
-    "corinthians": "corinthians", "fluminense": "fluminense",
-    "botafogo": "botafogo", "vasco": "vasco da gama", "vasco da gama": "vasco da gama",
-    "bragantino": "bragantino", "red bull bragantino": "bragantino",
-    "athletico paranaense": "athletico paranaense", "athletico-pr": "athletico paranaense",
-    "bahia": "bahia", "fortaleza": "fortaleza", "ceara": "ceara", "ceará": "ceara",
-    "sport": "sport recife", "sport recife": "sport recife",
-    "vitoria": "vitoria", "vitória": "vitoria", "chapecoense": "chapecoense",
-    "criciuma": "criciuma", "criciúma": "criciuma", "juventude": "juventude",
-    "cuiaba": "cuiaba", "cuiabá": "cuiaba",
-    "atletico goianiense": "atletico goianiense", "atlético go": "atletico goianiense",
-    "goias": "goias", "goiás": "goias", "mirassol": "mirassol",
-    "remo": "remo", "coritiba": "coritiba", "novorizontino": "novorizontino",
-    "ponte preta": "ponte preta", "vila nova": "vila nova",
-    "londrina": "londrina", "crb": "crb", "avai": "avai", "avaí": "avai",
-    "nautico": "nautico", "náutico": "nautico",
-    "américa mineiro": "america mineiro", "america mineiro": "america mineiro",
-    "sao bernardo": "sao bernardo", "são bernardo": "sao bernardo",
-    "operario pr": "operario ferroviario", "operário pr": "operario ferroviario",
-    "athletic club": "athletic club", "botafogo sp": "botafogo sp",
-    "ferroviaria": "ferroviaria", "ferroviária": "ferroviaria",
-    "volta redonda": "volta redonda",
+# ========== REDSCORES ==========
+REDSCORES_URLS = {
+    "cruzeiro": "https://redscores.com/team/cruzeiro/3371",
+    "flamengo": "https://redscores.com/team/flamengo/1234",
+    "palmeiras": "https://redscores.com/team/palmeiras/5678",
+    "atletico mineiro": "https://redscores.com/team/atletico-mineiro/9012",
+    "atlético mineiro": "https://redscores.com/team/atletico-mineiro/9012",
+    "atletico-mg": "https://redscores.com/team/atletico-mineiro/9012",
+    "gremio": "https://redscores.com/team/gremio/3456",
+    "grêmio": "https://redscores.com/team/gremio/3456",
+    "internacional": "https://redscores.com/team/internacional/7890",
+    "sao paulo": "https://redscores.com/team/sao-paulo/1111",
+    "são paulo": "https://redscores.com/team/sao-paulo/1111",
+    "corinthians": "https://redscores.com/team/corinthians/2222",
+    "fluminense": "https://redscores.com/team/fluminense/3333",
+    "botafogo": "https://redscores.com/team/botafogo/4444",
+    "vasco": "https://redscores.com/team/vasco-da-gama/5555",
+    "vasco da gama": "https://redscores.com/team/vasco-da-gama/5555",
+    "bragantino": "https://redscores.com/team/bragantino/6666",
+    "athletico paranaense": "https://redscores.com/team/athletico-paranaense/7777",
+    "athletico-pr": "https://redscores.com/team/athletico-paranaense/7777",
+    "bahia": "https://redscores.com/team/bahia/8888",
+    "fortaleza": "https://redscores.com/team/fortaleza/9999",
 }
 
 # ========== UTILITÁRIOS ==========
 def normalizar(texto):
     return unicodedata.normalize("NFD", texto.lower().strip()).encode("ascii", "ignore").decode("ascii")
-
-def encontrar_time_fbref(nome_time: str, dados_fbref: dict):
-    if not dados_fbref: return {}, "default"
-    nome_normalizado = normalizar(nome_time)
-    if nome_normalizado in dados_fbref: return dados_fbref[nome_normalizado], "FBref"
-    nome_mapeado = NOMES_FBREF.get(nome_normalizado, nome_normalizado)
-    if nome_mapeado in dados_fbref: return dados_fbref[nome_mapeado], "FBref"
-    for k, v in dados_fbref.items():
-        if nome_normalizado in k or k in nome_normalizado: return v, "FBref"
-        if nome_mapeado in k or k in nome_mapeado: return v, "FBref"
-    return {}, "default"
 
 def poisson(lmbda, k):
     if lmbda <= 0: return 1.0 if k == 0 else 0.0
@@ -154,7 +138,7 @@ def srow(label, bar, value):
 def card(title, content):
     return f'<div class="card"><div class="card-title">{title}</div>{content}</div>'
 
-# ========== FBREF (FONTE PRINCIPAL) ==========
+# ========== FBREF (FALLBACK) ==========
 @st.cache_data(ttl=3600, show_spinner=False)
 def buscar_fbref(competicao: str) -> dict:
     comp_id = FBREF_IDS.get(normalizar(competicao))
@@ -192,61 +176,102 @@ def buscar_fbref(competicao: str) -> dict:
     except: pass
     return dados
 
-# ========== BUSCAR ÚLTIMOS JOGOS ==========
-@st.cache_data(ttl=1800, show_spinner=False)
-def buscar_ultimos_jogos(nome_time: str, competicao: str, condicao: str = "home", limite: int = 5) -> list:
-    comp_id = FBREF_IDS.get(normalizar(competicao))
-    if not comp_id: return []
-    url = f"https://fbref.com/en/comps/{comp_id}/schedule/"
+# ========== REDSCORES (FONTE PRINCIPAL) ==========
+@st.cache_data(ttl=3600, show_spinner=False)
+def extrair_dados_redscores(nome_time):
+    url = REDSCORES_URLS.get(normalizar(nome_time))
+    if not url:
+        nome_fmt = nome_time.lower().strip().replace(" ", "-")
+        nome_fmt = unicodedata.normalize("NFD", nome_fmt).encode("ascii", "ignore").decode("ascii")
+        url = f"https://redscores.com/team/{nome_fmt}"
+    
     headers = {"User-Agent": "Mozilla/5.0"}
+    
     try:
-        time.sleep(3)
-        resp = requests.get(url, headers=headers, timeout=30)
-        if resp.status_code != 200: return []
-        tabelas = pd.read_html(StringIO(resp.text))
+        resp = requests.get(url, headers=headers, timeout=15)
+        if resp.status_code != 200:
+            return None
+        html = resp.text
+        
+        dados = {"fonte": "Redscores"}
+        
+        # xG
+        xg_match = re.search(r'xG[:\s]*([\d.]+)', html, re.IGNORECASE)
+        if xg_match: dados["xg"] = float(xg_match.group(1))
+        
+        # xGA
+        xga_match = re.search(r'xGA[:\s]*([\d.]+)', html, re.IGNORECASE)
+        if xga_match: dados["xga"] = float(xga_match.group(1))
+        
+        # Posse
+        posse_match = re.search(r'(?:Posse|Possession)[:\s]*(\d+)%', html, re.IGNORECASE)
+        if posse_match: dados["posse"] = float(posse_match.group(1))
+        
+        # SOG
+        sog_match = re.search(r'(?:Chutes ao Gol|Shots on Target)[:\s]*([\d.]+)', html, re.IGNORECASE)
+        if sog_match: dados["sog"] = float(sog_match.group(1))
+        
+        # Finalizações
+        fin_match = re.search(r'(?:Finalizações|Total Shots)[:\s]*([\d.]+)', html, re.IGNORECASE)
+        if fin_match: dados["fin"] = float(fin_match.group(1))
+        
+        # Escanteios
+        esc_match = re.search(r'(?:Escanteios|Corners)[:\s]*([\d.]+)', html, re.IGNORECASE)
+        if esc_match: dados["esc"] = float(esc_match.group(1))
+        
+        # Cartões
+        cart_match = re.search(r'(?:Cartões|Cards)[:\s]*([\d.]+)', html, re.IGNORECASE)
+        if cart_match: dados["cartoes"] = float(cart_match.group(1))
+        
+        # Faltas
+        faltas_match = re.search(r'(?:Faltas|Fouls)[:\s]*([\d.]+)', html, re.IGNORECASE)
+        if faltas_match: dados["faltas"] = float(faltas_match.group(1))
+        
+        # Últimos jogos
         jogos = []
-        time_norm = normalizar(nome_time)
-        time_mapeado = NOMES_FBREF.get(time_norm, time_norm)
-        for df in tabelas:
-            cols = [str(c).lower() for c in df.columns]
-            home_col = next((c for c in df.columns if "home" in c.lower()), None)
-            away_col = next((c for c in df.columns if "away" in c.lower()), None)
-            score_col = next((c for c in df.columns if "score" in c.lower()), None)
-            if not (home_col and score_col): continue
-            for _, row in df.iterrows():
-                try:
-                    home_team = str(row[home_col]).strip()
-                    away_team = str(row[away_col]).strip() if away_col else ""
-                    home_norm = normalizar(home_team)
-                    away_norm = normalizar(away_team) if away_team else ""
-                    if time_norm not in home_norm and time_norm not in away_norm and time_mapeado not in home_norm and time_mapeado not in away_norm: continue
-                    if condicao == "home" and time_norm not in home_norm and time_mapeado not in home_norm: continue
-                    if condicao == "away" and time_norm not in away_norm and time_mapeado not in away_norm: continue
-                    placar = str(row[score_col]).strip()
-                    nums = re.findall(r'\d+', placar)
-                    if len(nums) >= 2:
-                        gh, ga = int(nums[0]), int(nums[1])
-                        if time_norm in home_norm or time_mapeado in home_norm:
-                            jogos.append({"gols_pro": gh, "gols_contra": ga, "adv": away_team})
-                        else:
-                            jogos.append({"gols_pro": ga, "gols_contra": gh, "adv": home_team})
-                except: continue
-                if len(jogos) >= limite: break
-            if len(jogos) >= limite: break
-        return jogos[:limite]
-    except: return []
+        jogos_pattern = r'(\d{2}/\d{2}).*?(\d+)\s*-\s*(\d+)'
+        for match in re.finditer(jogos_pattern, html):
+            jogos.append({
+                "gols_pro": int(match.group(2)),
+                "gols_contra": int(match.group(3)),
+            })
+        
+        if jogos:
+            dados["ultimos_jogos"] = jogos[:5]
+            dados["jogos_encontrados"] = len(jogos)
+        
+        return dados
+        
+    except Exception as e:
+        st.warning(f"❌ Redscores: {e}")
+        return None
 
-def calcular_metricas_ultimos_jogos(jogos: list) -> dict:
-    if not jogos or len(jogos) < 2: return None
+def calcular_metricas_redscores(dados_redscores):
+    if not dados_redscores or "ultimos_jogos" not in dados_redscores:
+        return None
+    
+    jogos = dados_redscores["ultimos_jogos"]
+    if len(jogos) < 2:
+        return None
+    
     gols_pro = [j["gols_pro"] for j in jogos]
     gols_contra = [j["gols_contra"] for j in jogos]
+    
     def media_cv(valores):
-        m = np.mean(valores); dp = np.std(valores, ddof=0)
+        m = np.mean(valores)
+        dp = np.std(valores, ddof=0)
         cv = (dp / m * 100) if m > 0 else 0
         return m, cv
+    
     m_gols, cv_gols = media_cv(gols_pro)
     m_sof, _ = media_cv(gols_contra)
-    return {"gols": round(m_gols, 1), "cv_gols": round(cv_gols, 0), "sofridos": round(m_sof, 1), "jogos": len(jogos)}
+    
+    return {
+        "gols": round(m_gols, 1),
+        "cv_gols": round(cv_gols, 0),
+        "sofridos": round(m_sof, 1),
+        "jogos": len(jogos)
+    }
 
 # ========== MONTE CARLO ==========
 def monte_carlo(l1, l2, cv1=35, cv2=35, n=10000):
@@ -280,77 +305,101 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     alertas = []
     checklist = {}
 
-    with st.spinner("🔍 Buscando dados no FBref..."):
-        fb = buscar_fbref(competicao)
-
+    # 1. Tentar Redscores
+    with st.spinner("🔍 Buscando dados no Redscores..."):
+        dados_a = extrair_dados_redscores(time_a)
+        dados_b = extrair_dados_redscores(time_b)
+    
+    if dados_a:
+        st.success(f"✅ {time_a}: Dados extraídos do Redscores ({dados_a.get('jogos_encontrados', 0)} jogos)")
+    if dados_b:
+        st.success(f"✅ {time_b}: Dados extraídos do Redscores ({dados_b.get('jogos_encontrados', 0)} jogos)")
+    
+    # 2. Fallback: FBref
+    if not dados_a or not dados_b:
+        with st.spinner("⚠️ Redscores incompleto. Buscando FBref..."):
+            fb = buscar_fbref(competicao)
+        
+        if not dados_a:
+            dfb_a, fonte_a = encontrar_time_fbref(time_a, fb) if fb else ({}, "default")
+            if dfb_a:
+                dados_a = {"xg": dfb_a.get("xg"), "xga": dfb_a.get("xga"), "fonte": "FBref"}
+                st.info(f"⚠️ {time_a}: Usando FBref (fallback)")
+        
+        if not dados_b:
+            dfb_b, fonte_b = encontrar_time_fbref(time_b, fb) if fb else ({}, "default")
+            if dfb_b:
+                dados_b = {"xg": dfb_b.get("xg"), "xga": dfb_b.get("xga"), "fonte": "FBref"}
+                st.info(f"⚠️ {time_b}: Usando FBref (fallback)")
+    
+    # 3. Defaults
     DEF = DEFAULTS.get(normalizar(competicao), DEFAULTS["brasileirao"])
-
-    dfb_a, fonte_fb_a = encontrar_time_fbref(time_a, fb)
-    dfb_b, fonte_fb_b = encontrar_time_fbref(time_b, fb)
-
-    xg_a = dfb_a.get("xg") or DEF["xg"]
-    xga_a = dfb_a.get("xga") or DEF["xga"]
-    xg_b = dfb_b.get("xg") or DEF["xg"]
-    xga_b = dfb_b.get("xga") or DEF["xga"]
-
-    fonte_xg_a = dfb_a.get("fonte") or "default"
-    fonte_xg_b = dfb_b.get("fonte") or "default"
-
-    xg_a_disp = fonte_xg_a != "default"
-    xg_b_disp = fonte_xg_b != "default"
+    
+    xg_a = dados_a.get("xg") if dados_a else DEF["xg"]
+    xga_a = dados_a.get("xga") if dados_a else DEF["xga"]
+    xg_b = dados_b.get("xg") if dados_b else DEF["xg"]
+    xga_b = dados_b.get("xga") if dados_b else DEF["xga"]
+    
+    fonte_a = dados_a.get("fonte", "default") if dados_a else "default"
+    fonte_b = dados_b.get("fonte", "default") if dados_b else "default"
+    
+    xg_a_disp = fonte_a != "default"
+    xg_b_disp = fonte_b != "default"
     checklist["xg_time_a"] = xg_a_disp
     checklist["xg_time_b"] = xg_b_disp
     checklist["xg_disponivel"] = xg_a_disp and xg_b_disp
-
+    
     xg_label_a = f"{xg_a:.2f}" if xg_a_disp else f"{xg_a:.2f} (gols reais)"
     xg_label_b = f"{xg_b:.2f}" if xg_b_disp else f"{xg_b:.2f} (gols reais)"
-
-    # Buscar últimos jogos
-    jogos_a = buscar_ultimos_jogos(time_a, competicao, "home")
-    jogos_b = buscar_ultimos_jogos(time_b, competicao, "away")
-    met_a = calcular_metricas_ultimos_jogos(jogos_a)
-    met_b = calcular_metricas_ultimos_jogos(jogos_b)
-
+    
+    # Métricas dos últimos jogos
+    met_a = calcular_metricas_redscores(dados_a) if dados_a else None
+    met_b = calcular_metricas_redscores(dados_b) if dados_b else None
+    
     if met_a:
         gols_a, cv_gols_a = met_a["gols"], met_a["cv_gols"]
         checklist["dados_5_jogos"] = True
     else:
         gols_a, cv_gols_a = DEF["gols"], 35.0
-
+    
     if met_b:
         gols_b, cv_gols_b = met_b["gols"], met_b["cv_gols"]
         checklist["dados_5_jogos"] = True
     else:
         gols_b, cv_gols_b = DEF["gols"], 35.0
-
-    sog_a, sog_b = DEF["sog"], DEF["sog"]
-    fin_a, fin_b = DEF["fin"], DEF["fin"]
-    esc_a, esc_b = DEF["esc"], DEF["esc"]
-    faltas_a, faltas_b = DEF["faltas"], DEF["faltas"]
+    
+    sog_a = dados_a.get("sog", DEF["sog"]) if dados_a else DEF["sog"]
+    sog_b = dados_b.get("sog", DEF["sog"]) if dados_b else DEF["sog"]
+    fin_a = dados_a.get("fin", DEF["fin"]) if dados_a else DEF["fin"]
+    fin_b = dados_b.get("fin", DEF["fin"]) if dados_b else DEF["fin"]
+    esc_a = dados_a.get("esc", DEF["esc"]) if dados_a else DEF["esc"]
+    esc_b = dados_b.get("esc", DEF["esc"]) if dados_b else DEF["esc"]
+    faltas_a = dados_a.get("faltas", DEF["faltas"]) if dados_a else DEF["faltas"]
+    faltas_b = dados_b.get("faltas", DEF["faltas"]) if dados_b else DEF["faltas"]
     cv_sog_a = cv_sog_b = cv_fin_a = cv_fin_b = 35.0
-
-    checklist["fin_verificado"] = False
-    checklist["faltas_verificado"] = False
-    checklist["posse_verificado"] = False
+    
+    checklist["fin_verificado"] = bool(dados_a and dados_a.get("fin"))
+    checklist["faltas_verificado"] = bool(dados_a and dados_a.get("faltas"))
+    checklist["posse_verificado"] = bool(dados_a and dados_a.get("posse"))
     checklist["h2h_verificado"] = False
-
+    
     f_a, acao_a = fator_cv(cv_gols_a); f_b, acao_b = fator_cv(cv_gols_b)
     f_sog_a = 0.97 if 25 <= cv_sog_a <= 35 else 1.0
     f_sog_b = 0.97 if 25 <= cv_sog_b <= 35 else 1.0
-
+    
     l1 = ((xg_a + xga_b) / 2) * 0.95 * f_a * f_sog_a
     l2 = ((xg_b + xga_a) / 2) * 0.90 * f_b * f_sog_b
-
+    
     if ctx.get("t1_sem_obj"): l1 = max(0.05, l1 - 0.5); alertas.append("Regra 4.2: Time 1 sem objetivo")
     if ctx.get("t2_sem_obj"): l2 = max(0.05, l2 - 0.5); alertas.append("Regra 4.2: Time 2 sem objetivo")
     if ctx.get("t1_reserva"): l2 += 0.5; alertas.append("Regra 4.3: Time 1 reserva (+0.5 λ adv)")
     if ctx.get("t1_desespero"): l1 += 0.5; alertas.append("Regra 6C: Time 1 em desespero (+0.5 λ)")
     if ctx.get("t2_admin"): l2 = max(0.05, l2 - 0.3); alertas.append("Regra 6C: Time 2 administra (-0.3 λ)")
     checklist["contexto_aplicado"] = any(ctx.values())
-
+    
     l1, l2 = max(0.05, l1), max(0.05, l2)
     lt = l1 + l2
-
+    
     v1 = e = v2 = 0.0
     for i in range(10):
         for j in range(10):
@@ -358,34 +407,34 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
             if i > j: v1 += p
             elif i == j: e += p
             else: v2 += p
-
+    
     btts = (1 - math.exp(-l1)) * (1 - math.exp(-l2))
     over15 = prob_over(lt, 1); under15 = prob_under(lt, 1)
     over25 = prob_over(lt, 2); under25 = prob_under(lt, 2)
     under45 = prob_under(lt, 4)
-
+    
     mc = monte_carlo(l1, l2, cv_gols_a, cv_gols_b)
     checklist["monte_carlo_executado"] = True
-
+    
     over25_seguro = lt > 3.0 and not ctx.get("t1_sem_obj") and not ctx.get("t2_sem_obj")
     under25_seguro = lt < 2.0 and (xga_a < 0.8 or xga_b < 0.8)
     checklist["over25_verificado"] = True
     checklist["under25_verificado"] = True
     if not over25_seguro: alertas.append("Over 2.5 NEGADO (Regra 6A)")
     if not under25_seguro: alertas.append("Under 2.5 NÃO CONFIÁVEL (Regra 6B)")
-
+    
     checklist["sog_verificado"] = True
     checklist["cartoes_verificado"] = True
-
+    
     o_v1 = odds_v1 or 2.00; o_emp = odds_emp or 3.20; o_v2 = odds_v2 or 3.50
     checklist["odds_disponiveis"] = bool(odds_v1)
-
+    
     def vb(prob, odd, nome):
         ev_val = ev(prob, odd); k = kelly(prob, odd)
         conf = "Alta" if ev_val > 0.05 else ("Media" if ev_val > 0.005 else ("Baixa" if ev_val > 0 else "Sem Value"))
         sr = min(k * 0.33, 0.03) * 100 if conf != "Sem Value" else 0
         return {"nome":nome,"prob":prob,"odd":odd,"ev":ev_val,"kelly":k,"stake":sr,"conf":conf}
-
+    
     mercados = [
         vb(v1, o_v1, f"Vit {time_a}"), vb(e, o_emp, "Empate"), vb(v2, o_v2, f"Vit {time_b}"),
         vb(btts, 1.90, "BTTS Sim"), vb(over25, 2.10, "Over 2.5"),
@@ -394,21 +443,21 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     ]
     checklist["ev_ok"] = any(m["ev"] > 0.005 for m in mercados)
     checklist["checklist_completo"] = True
-
+    
     n_ok = sum(1 for v in checklist.values() if v)
     alta_incerteza = n_ok < 10 or cv_gols_a >= 60 or cv_gols_b >= 60
     if alta_incerteza: alertas.insert(0, "⚠️ ALTA INCERTEZA — Stake reduzido a 0.5% do bank")
-
+    
     def nota_ef(sog, fin, gols):
         if fin == 0: return 50
         return min(100, int((sog/fin*0.5 + gols/fin*0.5) * 200))
     nota_a, nota_b = nota_ef(sog_a, fin_a, gols_a), nota_ef(sog_b, fin_b, gols_b)
-
+    
     # ========== RENDER ==========
     st.markdown(f'<div class="match-header"><div class="match-title">{time_a.upper()} × {time_b.upper()}</div><div class="match-comp">🏆 {competicao}</div></div>', unsafe_allow_html=True)
     if alta_incerteza: st.markdown('<div class="incerteza">⚠️ ALTA INCERTEZA — Aposte no máximo 0.5% do bank</div>', unsafe_allow_html=True)
     for al in alertas: st.markdown(f'<div class="alert-box">{al}</div>', unsafe_allow_html=True)
-
+    
     # 1. Ajuste por Variância
     html = f"""<table><tr><th>Métrica</th><th>Time</th><th>CV</th><th>Ação</th></tr>
     <tr><td>Gols</td><td>{time_a}</td><td>{cv_gols_a:.0f}%</td><td>{acao_a}</td></tr>
@@ -416,7 +465,7 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     <tr><td>SOG</td><td>{time_a}</td><td>{cv_sog_a:.0f}%</td><td>{acao_sog(cv_sog_a)}</td></tr>
     <tr><td>SOG</td><td>{time_b}</td><td>{cv_sog_b:.0f}%</td><td>{acao_sog(cv_sog_b)}</td></tr></table>"""
     st.markdown(card("1. Ajuste por Variância (Regra 3)", html), unsafe_allow_html=True)
-
+    
     # 2. Poisson
     html = f"<p style='color:#C9A84C'>λ {time_a} = {l1:.2f} | λ {time_b} = {l2:.2f}</p><table><tr><th>Gols</th><th>Prob {time_a}</th><th>Prob {time_b}</th></tr>"
     for g in range(4):
@@ -426,7 +475,7 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
         html += f"<tr><td>{label}</td><td>{pa:.1f}%</td><td>{pb:.1f}%</td></tr>"
     html += f"</table><p style='margin-top:8px;color:#A0B4C8'>BTTS: {btts*100:.1f}% | Over 1.5: {over15*100:.1f}% | Over 2.5: {over25*100:.1f}% | Under 4.5: {under45*100:.1f}%</p>"
     st.markdown(card("2. Poisson Ajustado", html), unsafe_allow_html=True)
-
+    
     # 3. Monte Carlo
     html = f"""<p style='color:#A0B4C8;font-size:12px'>10.000 simulações com ruído</p>
     <table><tr><th>Resultado</th><th>Poisson</th><th>Monte Carlo</th></tr>
@@ -436,14 +485,14 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     <tr><td>BTTS</td><td>{btts*100:.1f}%</td><td>{mc['btts']*100:.1f}%</td></tr>
     <tr><td>Over 2.5</td><td>{over25*100:.1f}%</td><td>{mc['over25']*100:.1f}%</td></tr></table>"""
     st.markdown(card("3. Monte Carlo (10k simulações)", html), unsafe_allow_html=True)
-
+    
     # 4. Eficiência + Fontes
     def ef_label(n): return "eficiente" if n>83 else ("média" if n>=75 else "ineficiente")
-    html = f"""<table><tr><th>Time</th><th>xG</th><th>xGA</th><th>Fonte xG</th><th>Nota</th><th>Status</th></tr>
-    <tr><td>{time_a}</td><td>{xg_label_a}</td><td>{xga_a:.2f}</td><td>{fonte_xg_a}</td><td>{nota_a}</td><td>{ef_label(nota_a)}</td></tr>
-    <tr><td>{time_b}</td><td>{xg_label_b}</td><td>{xga_b:.2f}</td><td>{fonte_xg_b}</td><td>{nota_b}</td><td>{ef_label(nota_b)}</td></tr></table>"""
+    html = f"""<table><tr><th>Time</th><th>xG</th><th>xGA</th><th>Fonte</th><th>Nota</th><th>Status</th></tr>
+    <tr><td>{time_a}</td><td>{xg_label_a}</td><td>{xga_a:.2f}</td><td>{fonte_a}</td><td>{nota_a}</td><td>{ef_label(nota_a)}</td></tr>
+    <tr><td>{time_b}</td><td>{xg_label_b}</td><td>{xga_b:.2f}</td><td>{fonte_b}</td><td>{nota_b}</td><td>{ef_label(nota_b)}</td></tr></table>"""
     st.markdown(card("4. Eficiência Ofensiva + Fontes", html), unsafe_allow_html=True)
-
+    
     # 5. Value Bets
     html = "<table><tr><th>Mercado</th><th>Prob.</th><th>Odd</th><th>EV%</th><th>Kelly</th><th>Stake</th></tr>"
     for m in mercados:
@@ -451,7 +500,7 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
         html += f"<tr><td>{m['nome']}</td><td>{m['prob']*100:.1f}%</td><td>{m['odd']:.2f}</td><td style='color:{cor}'>{m['ev']*100:+.1f}%</td><td>{m['kelly']:.3f}</td><td>{m['stake']:.1f}%</td></tr>"
     html += "</table>"
     st.markdown(card("5. Value Bets — Kelly 33% (Regra 5)", html), unsafe_allow_html=True)
-
+    
     # 6. Tabela de Sugestões
     html = "<p style='color:#C9A84C;font-weight:600'>⚽ GOLS</p>"
     for label, val, rec in [
@@ -474,7 +523,7 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     html += "<p style='color:#C9A84C;font-weight:600;margin-top:10px'>🥅 CHUTES A GOL (SOG)</p>"
     html += srow("Média Combinada", barra((sog_a + sog_b) / 15 * 100, "#C9A84C"), f"{sog_a + sog_b:.0f} por jogo")
     st.markdown(card("6. Tabela de Sugestões", html), unsafe_allow_html=True)
-
+    
     # 7. Confluência
     xg_comb = xg_a + xg_b
     if xg_comb > 3.5: classif = "Explosão"
@@ -488,7 +537,7 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     <tr><td class='stat-label'>Mercado sugerido</td><td class='stat-value'>{mercado_sug}</td></tr>
     <tr><td class='stat-label'>Status</td><td class='stat-value'>{conv}</td></tr></table>"""
     st.markdown(card("7. Confluência com Modelo Qualitativo", html), unsafe_allow_html=True)
-
+    
     # 8. Confiança Geral
     nivel = "⚠️ ALTA INCERTEZA" if alta_incerteza else ("Alta" if n_ok >= 12 else ("Media" if n_ok >= 9 else "Baixa"))
     stake_geral = "0.5%" if alta_incerteza else ("2-3%" if nivel == "Alta" else ("1-2%" if nivel == "Media" else "0.5-1%"))
@@ -498,7 +547,7 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     <table style='margin-top:8px'><tr><th>Check (16 itens)</th><th>Status</th></tr>
     {''.join(f"<tr><td>{k.replace('_',' ').title()}</td><td>{'✅' if v else '❌'}</td></tr>" for k, v in checklist.items())}</table>"""
     st.markdown(card("8. Confiança Geral (Regra 5)", html), unsafe_allow_html=True)
-
+    
     # 9. CSV
     vb_top = max(mercados, key=lambda m: m["ev"])
     csv = pd.DataFrame([{
@@ -512,7 +561,7 @@ def analisar(time_a, time_b, competicao, odds_v1=None, odds_emp=None, odds_v2=No
     }])
     st.dataframe(csv, use_container_width=True)
     st.download_button("📥 Baixar CSV", csv.to_csv(index=False).encode("utf-8"), file_name="formula_tips_v41.csv", mime="text/csv")
-
+    
     try:
         hist = json.loads(HISTORICO_FILE.read_text()) if HISTORICO_FILE.exists() else []
         hist.insert(0, {"data": datetime.now().strftime("%d/%m/%Y %H:%M"), "time_a": time_a, "time_b": time_b, "competicao": competicao, "v1": round(v1*100,1), "emp": round(e*100,1), "v2": round(v2*100,1), "nivel": nivel})
@@ -529,14 +578,14 @@ if os.path.exists(logo_path):
     with col_logo: st.image(logo_path, width=90)
     with col_titulo:
         st.markdown("<h1 style='margin:0;padding-top:8px;color:#F0F0F0'>FORMULA TIPS V4.1</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='color:#C9A84C;margin:0;font-size:14px'>Versão Estável — FBref + Últimos Jogos</p>", unsafe_allow_html=True)
+        st.markdown("<p style='color:#C9A84C;margin:0;font-size:14px'>Redscores + FBref + Fallbacks</p>", unsafe_allow_html=True)
 else:
     st.markdown("<h1 style='color:#F0F0F0;margin:0'>FORMULA TIPS V4.1</h1>", unsafe_allow_html=True)
 
 st.markdown("<hr style='border-color:#2A3F55;margin:12px 0'>", unsafe_allow_html=True)
 
-time_a = st.text_input("🟢 Time Mandante", placeholder="Ex: Flamengo")
-time_b = st.text_input("🔴 Time Visitante", placeholder="Ex: Palmeiras")
+time_a = st.text_input("🟢 Time Mandante", placeholder="Ex: cruzeiro")
+time_b = st.text_input("🔴 Time Visitante", placeholder="Ex: flamengo")
 competicao = st.selectbox("🏆 Competição", list(FBREF_IDS.keys()))
 
 with st.expander("📋 Contexto da Partida (Regra 4 e 6C)"):
