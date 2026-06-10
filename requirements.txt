@@ -1,7 +1,5 @@
 streamlit
+numpy
 requests
 pandas
-lxml
-html5lib
 playwright
-numpy
